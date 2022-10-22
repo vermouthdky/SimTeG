@@ -127,3 +127,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# style files
+.style.yapf
+
+# data files and pretrained files
+data/
+logs/
+pretrained/
+ckpt/
