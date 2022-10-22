@@ -1,2 +1,2 @@
-python src/datasets/ogbn-arxiv.py
-# echo 'test'
+python src/datasets/ogbn_arxiv.py
+echo ${PWD}
