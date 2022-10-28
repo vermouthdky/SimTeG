@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 from torch.cuda import is_available
 
 from src.options import parse_args
-from src.run import test, train, train_and_test
+from src.runner import train
 from src.utils import set_logging
 
 
@@ -16,12 +16,12 @@ def set_env(random_seed, world_size):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29500"
+    os.environ["MASTER_PORT"] = "32020"
     if torch.cuda.is_available():
         torch.cuda.manual_seed(random_seed)
         torch.cuda.manual_seed_all(random_seed)
-        cudas = ",".join([str(_ + 1) for _ in range(world_size)])
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(world_size)
+        gpus = ",".join([str(_) for _ in range(world_size)])
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpus
     torch.manual_seed(random_seed)
     np.random.seed(random_seed)
     random.seed(random_seed)
@@ -40,9 +40,10 @@ def main():
             mp.freeze_support()
             mgr = mp.Manager()
             end = mgr.Value("b", False)
-            mp.spawn(train, args=(args), nprocs=args.world_size, join=True)
+            mp.spawn(train, args=(args,), nprocs=args.world_size, join=True)
         else:
-            pass
+            end = None
+            train(0, args)
 
 
 # d8d71a8396ff11200038a65989fa142c56290704
