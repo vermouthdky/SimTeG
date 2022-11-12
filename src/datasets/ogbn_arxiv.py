@@ -18,7 +18,7 @@ class OgbnArxivWithText(InMemoryDataset):
         self,
         root="data",
         transform=None,
-        pre_transform=ToSparseTensor(),
+        pre_transform=None,
         # tokenizer="allenai/longformer-base-4096",
         tokenizer="roberta-base",
     ):
@@ -39,9 +39,7 @@ class OgbnArxivWithText(InMemoryDataset):
         self.additional_edge_files = []
         self.binary = False
         self.graph_url = "http://snap.stanford.edu/ogb/data/nodeproppred/arxiv.zip"
-        self.text_url = (
-            "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz"
-        )
+        self.text_url = "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz"
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
 
         super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
@@ -56,21 +54,9 @@ class OgbnArxivWithText(InMemoryDataset):
         if os.path.isfile(os.path.join(path, "split_dict.pt")):
             return torch.load(os.path.join(path, "split_dict.pt"))
 
-        train_idx = torch.from_numpy(
-            pd.read_csv(
-                osp.join(path, "train.csv.gz"), compression="gzip", header=None
-            ).values.T[0]
-        ).to(torch.long)
-        valid_idx = torch.from_numpy(
-            pd.read_csv(
-                osp.join(path, "valid.csv.gz"), compression="gzip", header=None
-            ).values.T[0]
-        ).to(torch.long)
-        test_idx = torch.from_numpy(
-            pd.read_csv(
-                osp.join(path, "test.csv.gz"), compression="gzip", header=None
-            ).values.T[0]
-        ).to(torch.long)
+        train_idx = torch.from_numpy(pd.read_csv(osp.join(path, "train.csv.gz"), compression="gzip", header=None).values.T[0]).to(torch.long)
+        valid_idx = torch.from_numpy(pd.read_csv(osp.join(path, "valid.csv.gz"), compression="gzip", header=None).values.T[0]).to(torch.long)
+        test_idx = torch.from_numpy(pd.read_csv(osp.join(path, "test.csv.gz"), compression="gzip", header=None).values.T[0]).to(torch.long)
 
         return {"train": train_idx, "valid": valid_idx, "test": test_idx}
 
@@ -91,9 +77,7 @@ class OgbnArxivWithText(InMemoryDataset):
     def download(self):
         path = download_url(self.graph_url, self.original_root)
         extract_zip(path, self.original_root)
-        text_path = download_url(
-            self.text_url, os.path.join(self.original_root, "arxiv/raw")
-        )
+        text_path = download_url(self.text_url, os.path.join(self.original_root, "arxiv/raw"))
         os.unlink(path)
         shutil.rmtree(self.root)
         shutil.move(osp.join(self.original_root, self.download_name), self.root)
@@ -120,7 +104,9 @@ class OgbnArxivWithText(InMemoryDataset):
             data.y = torch.from_numpy(node_label).to(torch.long)
 
         data = data if self.pre_transform is None else self.pre_transform(data)
-        data.text_encoding = self._mapping_and_tokenizing()
+        text_encoding = self._mapping_and_tokenizing()
+        data.input_ids = text_encoding.input_ids
+        data.attention_mask = text_encoding.attention_mask
 
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
@@ -141,9 +127,7 @@ class OgbnArxivWithText(InMemoryDataset):
         # BUG: the first column's id is inplaced with 'titleabs.tsv'
         # BUG: Try to fix it manually
         df.iloc[0][0] = 200971
-        df_mapping = pd.read_csv(
-            os.path.join(self.root, "mapping/nodeidx2paperid.csv.gz")
-        )
+        df_mapping = pd.read_csv(os.path.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
         df["abstitle"] = df["title"] + ". " + df["abstract"]
         df = df.drop(columns=["title", "abstract"])
         df = df.astype({"paper id": np.int64, "abstitle": str})
