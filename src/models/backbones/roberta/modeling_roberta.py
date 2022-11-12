@@ -17,6 +17,7 @@
 
 import math
 from typing import List, Optional, Tuple, Union
+import logging
 
 import torch
 import torch.utils.checkpoint
@@ -40,13 +41,12 @@ from transformers.utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
-    logging,
     replace_return_docstrings,
 )
 from .configuration_roberta import RobertaConfig
 
 
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 _CHECKPOINT_FOR_DOC = "roberta-base"
 _CONFIG_FOR_DOC = "RobertaConfig"
