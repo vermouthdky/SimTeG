@@ -4,14 +4,23 @@ import os
 from datetime import datetime
 
 
+class RankFilter(logging.Filter):
+    def filter(self, rec):
+        return int(os.environ["RANK"]) == 0
+
+
 def set_logging():
     root = logging.getLogger()
+    # NOTE: clear the std::out handler first to avoid duplicated output
+    if root.hasHandlers():
+        root.handlers.clear()
     root.setLevel(logging.INFO)
-    formatter = logging.Formatter("[%(levelname)s %(asctime)s] %(message)s")
+    formatter = logging.Formatter("[%(name)s %(levelname)s %(asctime)s]\n %(message)s")
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(RankFilter())
     root.addHandler(console_handler)
 
     if not os.path.exists("./logs"):
@@ -20,4 +29,11 @@ def set_logging():
     file_handler = logging.FileHandler("./logs/{}.log".format(date_time))
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(RankFilter())  # setup filter
     root.addHandler(file_handler)
+
+
+if __name__ == "__main__":
+    set_logging()
+    logger = logging.getLogger(__name__)
+    logger.info("test")
