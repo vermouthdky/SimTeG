@@ -1,11 +1,11 @@
 import json
+import logging
 import os
 import random
 
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from torch.cuda import is_available
 
 from src.options import parse_args
 from src.runner import train
@@ -32,20 +32,9 @@ def set_env(random_seed, world_size):
 def main():
     args = parse_args()
     set_logging()
-    set_env(args.random_seed, args.world_size)
-    if args.mode == "train":
-        print("--------------------train-------------------")
-        if args.world_size > 1:
-            mp.freeze_support()
-            mgr = mp.Manager()
-            end = mgr.Value("b", False)
-            mp.spawn(train, args=(args,), nprocs=args.world_size, join=True)
-        else:
-            end = None
-            train(0, args)
+    set_env(args.random_seed, int(os.environ["WORLD_SIZE"]))
+    train(args)
 
-
-# d8d71a8396ff11200038a65989fa142c56290704
 
 if __name__ == "__main__":
     main()
