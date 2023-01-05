@@ -8,15 +8,13 @@ import torch
 import torch.multiprocessing as mp
 
 from src.options import parse_args
-from src.runner import train
+from run import train
 from src.utils import set_logging
 
 
 def set_env(random_seed, world_size):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "32020"
     if world_size > 1:
         os.environ["TOKENIZERS_PARALLELISM"] = "true"
     if torch.cuda.is_available():
