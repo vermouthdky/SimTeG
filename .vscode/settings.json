@@ -6,5 +6,5 @@
     "sync-rsync.onSaveIndividual": true,
     "sync-rsync.shell": "",
     "sync-rsync.autoHideOutput": false,
-    "sync-rsync.executable": "/usr/bin/rsync"
+    "sync-rsync.executable": "/usr/bin/rsync",
 }
