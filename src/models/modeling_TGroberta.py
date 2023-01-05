@@ -6,15 +6,16 @@ import torch
 from torch import nn, tanh
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from torch_geometric.nn import GATConv
+from tqdm import tqdm
 from transformers.modeling_outputs import (
     BaseModelOutputWithPoolingAndCrossAttentions,
     MaskedLMOutput,
     SequenceClassifierOutput,
 )
 
-from .backbones.modeling_gnn import GNNModel
-from .backbones.roberta.configuration_roberta import RobertaConfig
-from .backbones.roberta.modeling_roberta import (
+from .LMs.modeling_gnn import GNNModel
+from .LMs.roberta.configuration_roberta import RobertaConfig
+from .LMs.roberta.modeling_roberta import (
     RobertaEmbeddings,
     RobertaEncoder,
     RobertaLMHead,
@@ -165,7 +166,28 @@ class TGRobertaForNodeClassification(RobertaPreTrainedModel):
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits[train_mask], labels[train_mask])
-        return loss
+
+        return (logits, loss) if output_hidden_states else loss
+
+    @torch.no_grad()
+    def inference(self, data, subgraph_loader, rank):
+        logits_all = []
+        pbar = tqdm(subgraph_loader, desc="Iteration", disable=False)
+        for step, (batch_size, n_id, adjs) in enumerate(subgraph_loader):
+            adjs = [adj.to(rank) for adj in adjs]
+            logits, loss = self(
+                batch_size,
+                data.input_ids[n_id].cuda(),
+                adjs,
+                data.attention_mask[n_id][:batch_size].cuda(),
+                data.y[n_id][:batch_size].cuda(),
+                data.train_mask[n_id][:batch_size],
+                output_hidden_states=True,
+            )
+            logits_all.append(logits.to("cpu"))
+            pbar.update()
+        logits_all = torch.cat(logits_all, dim=0)
+        return logits_all
 
 
 class TGRobertaNodeClsHead(nn.Module):

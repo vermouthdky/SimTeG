@@ -1,7 +1,16 @@
 import logging
-import sys
 import os
+import sys
 from datetime import datetime
+
+from torch.distributed import barrier
+
+
+def set_trace():
+    if int(os.environ["RANK"]) == 0:
+        __import__("ipdb").set_trace()
+    else:
+        barrier()
 
 
 class RankFilter(logging.Filter):
@@ -15,7 +24,7 @@ def set_logging():
     if root.hasHandlers():
         root.handlers.clear()
     root.setLevel(logging.INFO)
-    formatter = logging.Formatter("[%(name)s %(levelname)s %(asctime)s]\n %(message)s")
+    formatter = logging.Formatter("[%(name)s %(asctime)s] %(message)s")
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
