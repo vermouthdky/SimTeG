@@ -15,8 +15,10 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModel
 
 from src.datasets import load_dataset
-from src.models.modeling_gbert import GBert
+from src.models.modeling_gbert import GBert, Roberta
+from src.models.modeling_gnn import SAGN
 from src.trainer import Trainer
+from src.utils import is_dist
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,18 @@ def cleanup():
     dist.destroy_process_group()
 
 
+def load_model(args):
+    model_class = {"GBert": GBert, "SAGN": SAGN, "Roberta": Roberta}
+    assert args.model_type in model_class.keys()
+    return model_class[args.model_type](args)
+
+
 def load_data(args):
     dataset = load_dataset(
-        args.dataset, root=args.data_folder, transform=ToUndirected(), tokenizer=args.pretrained_model
+        args.dataset,
+        root=args.data_folder,
+        transform=ToUndirected(),
+        tokenizer=args.pretrained_model,
     )
     split_idx = dataset.get_idx_split()
     data = dataset[0]
@@ -55,7 +66,7 @@ def train(args):
         torch.distributed.barrier()
     # setup dataset: [ogbn-arxiv]
     data, split_idx, evaluator, processed_dir = load_data(args)
-    model = GBert(args)
+    model = load_model(args)
     if rank == 0:
         torch.distributed.barrier()
     # trainer
@@ -64,19 +75,25 @@ def train(args):
     cleanup()
 
 
-# TODO: add test function
 def test(args):
-    model = load_model(args)
+    if is_dist():
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        set_single_env(rank, world_size)
+        if rank not in [-1, 0]:
+            # Make sure only the first process in distributed training will download model & vocab
+            torch.distributed.barrier()
+    # setup dataset: [ogbn-arxiv]
     data, split_idx, evaluator, processed_dir = load_data(args)
-    model.eval()
-    subgraph_loader = NeighborSampler(
-        data.edge_index, sizes=[15, 10], node_idx=None, batch_size=5, shuffle=False, num_workers=24
-    )
-    module = model if int(os.environ["RANK"]) == -1 else model.module
-    logits = module.inference(data, subgraph_loader, rank)
-    y_true = data.y.unsqueeze(-1)
-    y_pred = logits.argmax(dim=-1, keepdim=True)
-    train_acc = evaluator.eval({"y_true": y_true[data.train_mask], "y_pred": y_pred[data.train_mask]})["acc"]
-    valid_acc = evaluator.eval({"y_true": y_true[data.valid_mask], "y_pred": y_pred[data.valid_mask]})["acc"]
-    test_acc = evaluator.eval({"y_true": y_true[data.test_mask], "y_pred": y_pred[data.test_mask]})["acc"]
-    return train_acc, valid_acc, test_acc
+    model = GBert(args)
+    if is_dist() and rank == 0:
+        torch.distributed.barrier()
+    # trainer
+    trainer = Trainer(args, model, data, split_idx, evaluator)
+    # train_acc = trainer.evaluate(mode="train")
+    train_acc = 0.0  # BUG: for debug
+    valid_acc = trainer.evaluate(mode="valid")
+    logger.info("valid_acc: {:.4f}".format(valid_acc))
+    test_acc = trainer.evaluate(mode="test")
+    logger.info(f"train acc: {train_acc:.4f}, valid: {valid_acc:.4f}, test: {test_acc:.4f}")
+    # cleanup()

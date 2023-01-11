@@ -6,16 +6,13 @@ from datetime import datetime
 from torch.distributed import barrier
 
 
-def set_trace():
-    if int(os.environ["RANK"]) == 0:
-        __import__("ipdb").set_trace()
-    else:
-        barrier()
+def is_dist():
+    return False if os.getenv("WORLD_SIZE") is None else True
 
 
 class RankFilter(logging.Filter):
     def filter(self, rec):
-        return int(os.environ["RANK"]) == 0
+        return is_dist() == False or int(os.environ["RANK"]) == 0
 
 
 def set_logging():
@@ -31,15 +28,14 @@ def set_logging():
     console_handler.setFormatter(formatter)
     console_handler.addFilter(RankFilter())
     root.addHandler(console_handler)
-
-    if not os.path.exists("./logs"):
-        os.mkdir("./logs")
-    date_time = datetime.now().strftime("%Y-%b-%d_%H-%M")
-    file_handler = logging.FileHandler("./logs/{}.log".format(date_time))
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RankFilter())  # setup filter
-    root.addHandler(file_handler)
+    # if not os.path.exists("./logs"):
+    #     os.mkdir("./logs")
+    # date_time = datetime.now().strftime("%Y-%b-%d_%H-%M")
+    # file_handler = logging.FileHandler("./logs/{}.log".format(date_time))
+    # file_handler.setLevel(logging.INFO)
+    # file_handler.setFormatter(formatter)
+    # file_handler.addFilter(RankFilter())  # setup filter
+    # root.addHandler(file_handler)
 
 
 if __name__ == "__main__":

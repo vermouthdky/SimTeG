@@ -13,6 +13,7 @@ class SAGN(nn.Module):
     def __init__(
         self,
         args,
+        num_hops,
         n_layers=2,
         num_heads=1,
         weight_style="attention",
@@ -26,7 +27,7 @@ class SAGN(nn.Module):
         position_emb=False,
     ):
         super(SAGN, self).__init__()
-        num_hops = args.gnn_num_layers + 1
+        num_hops = num_hops
         in_feats = args.num_feats
         hidden = args.gnn_dim_hidden
         out_feats = args.num_labels
@@ -332,7 +333,14 @@ class ParallelMLP(nn.Module):
             )
         else:
             # self.layers.append(MultiHeadLinear(in_feats, hidden, n_heads))
-            self.layers.append(nn.Conv1d(in_feats * n_heads, hidden * n_heads, kernel_size=1, groups=n_heads))
+            self.layers.append(
+                nn.Conv1d(
+                    in_feats * n_heads,
+                    hidden * n_heads,
+                    kernel_size=1,
+                    groups=n_heads,
+                )
+            )
             if normalization == "batch":
                 # self.norms.append(MultiHeadBatchNorm(n_heads, hidden * n_heads))
                 self.norms.append(nn.BatchNorm1d(hidden * n_heads))
@@ -358,7 +366,14 @@ class ParallelMLP(nn.Module):
                 if normalization == "none":
                     self.norms.append(nn.Identity())
             # self.layers.append(MultiHeadLinear(hidden, out_feats, n_heads))
-            self.layers.append(nn.Conv1d(hidden * n_heads, out_feats * n_heads, kernel_size=1, groups=n_heads))
+            self.layers.append(
+                nn.Conv1d(
+                    hidden * n_heads,
+                    out_feats * n_heads,
+                    kernel_size=1,
+                    groups=n_heads,
+                )
+            )
         if self._n_layers > 1:
             self.relu = nn.ReLU()
             self.dropout = nn.Dropout(dropout)
@@ -461,7 +476,15 @@ class MultiHeadLinear(nn.Module):
 
 # Modified multi-head BatchNorm1d layer
 class MultiHeadBatchNorm(nn.Module):
-    def __init__(self, n_heads, in_feats, momentum=0.1, affine=True, device=None, dtype=None):
+    def __init__(
+        self,
+        n_heads,
+        in_feats,
+        momentum=0.1,
+        affine=True,
+        device=None,
+        dtype=None,
+    ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         assert in_feats % n_heads == 0
