@@ -1,9 +1,9 @@
 dataset='ogbn-arxiv'
 model_type='Roberta'
-suffix='test'
+suffix='main'
 
 # training parameters
-eval_interval=5
+eval_interval=3
 lr=1e-4
 weight_decay=0.0
 batch_size=20
@@ -14,7 +14,7 @@ accum_interval=5
 # model parameters
 gnn_num_layers=2
 gnn_type=GraphSAGE
-gnn_dropout=0.2
+gnn_dropout=0.7
 
 bash scripts/train.sh $model_type $dataset $suffix \
     $eval_interval \

@@ -6,6 +6,12 @@ from datetime import datetime
 from torch.distributed import barrier
 
 
+def dataset2foldername(dataset):
+    assert dataset in ["ogbn-arxiv", "ogbn-products", "ogbn-papers100M"]
+    name_dict = {"ogbn-arxiv": "ogbn_arxiv", "ogbn-products": "ogbn_products", "ogbn-papers100M": "ogbn_papers100M"}
+    return name_dict[dataset]
+
+
 def is_dist():
     return False if os.getenv("WORLD_SIZE") is None else True
 

@@ -1,6 +1,6 @@
 dataset='ogbn-arxiv'
 model_type='GBert'
-suffix='adapter'
+suffix='main' # TODO: change with hp
 
 # training parameters
 eval_interval=5
@@ -10,12 +10,11 @@ batch_size=20
 eval_batch_size=300
 epochs=50
 accum_interval=5
-hidden_dropout_prob=0.5
 
 # model parameters
 gnn_num_layers=4
 gnn_type=SAGN
-gnn_dropout=0.5
+gnn_dropout=0.2
 
 bash scripts/train.sh $model_type $dataset $suffix \
     $eval_interval \
@@ -25,7 +24,6 @@ bash scripts/train.sh $model_type $dataset $suffix \
     $eval_batch_size \
     $epochs \
     $accum_interval \
-    $hidden_dropout_prob \
     $gnn_num_layers \
     $gnn_type \
     $gnn_dropout

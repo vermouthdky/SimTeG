@@ -1,21 +1,21 @@
 dataset='ogbn-arxiv'
-model_type='GBert'
-suffix='adapter'
+model_type='Deberta'
+suffix='main'
 
 # training parameters
-eval_interval=5
+eval_interval=2
 lr=1e-4
 weight_decay=0.0
-batch_size=20
-eval_batch_size=300
+batch_size=10
+eval_batch_size=100
 epochs=50
 accum_interval=5
-hidden_dropout_prob=0.5
+hidden_dropout_prob=0.1
 
 # model parameters
 gnn_num_layers=4
 gnn_type=SAGN
-gnn_dropout=0.5
+gnn_dropout=0.1
 
 bash scripts/train.sh $model_type $dataset $suffix \
     $eval_interval \

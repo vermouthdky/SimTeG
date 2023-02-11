@@ -1,14 +1,14 @@
 # dataset and test mode
 dataset='ogbn-arxiv'
-ckpt_name='GBert-best.pt' # TGRoberta-best.pt
-mode='test'
+model_type='Roberta'
+mode='save_bert_x'
+ckpt_name=${model_type}-best.pt # GBert-best.pt
 
 # training parameters
-base_dir=out/ogbn-arxiv/GBert/adapter
+base_dir=out/ogbn-arxiv/${model_type}/main
 ckpt_dir=${base_dir}/ckpt
-model_type='GBert'
 
-# model parameters should be the same as the training
+# !model parameters should be the same as the training
 gnn_type='SAGN'
 gnn_num_layers=4
 
@@ -23,5 +23,4 @@ python main.py \
     --gnn_num_layers $gnn_num_layers \
     --cont $cont \
     --ckpt_dir $ckpt_dir \
-    --output_dir $base_dir \
-    --ckpt_name $ckpt_name 2>&1 | tee ${base_dir}/test.txt
+    --ckpt_name $ckpt_name 2>&1 | tee ${base_dir}/save_bert_x.txt

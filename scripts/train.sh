@@ -13,7 +13,7 @@ mkdir -p ${output_dir}
 mkdir -p ${ckpt_dir}
 
 # distributed training envs
-WORLD_SIZE=6
+WORLD_SIZE=8
 MASTER_PORT=32020
 
 # training parameters
@@ -24,17 +24,22 @@ batch_size=$7
 eval_batch_size=$8
 epochs=$9
 accum_interval=${10}
+hidden_dropout_prob=${11}
 
 # model parameters
-gnn_num_layers=${11}
-gnn_type=${12}
-gnn_dropout=${13}
+gnn_num_layers=${12}
+gnn_type=${13}
+gnn_dropout=${14}
+
+# use bert_x
+# use_bert_x=${14}
 
 torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --mode $mode \
     --model_type $model_type \
     --dataset $dataset \
     --ckpt_dir $ckpt_dir \
+    --output_dir $output_dir \
     --eval_interval $eval_interval \
     --lr $lr \
     --weight_decay $weight_decay \
@@ -42,6 +47,7 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --eval_batch_size $eval_batch_size \
     --epochs $epochs \
     --accum_interval $accum_interval \
+    --hidden_dropout_prob $hidden_dropout_prob \
     --gnn_num_layers $gnn_num_layers \
     --gnn_type $gnn_type \
     --gnn_dropout $gnn_dropout 2>&1 | tee ${output_dir}/log.txt
