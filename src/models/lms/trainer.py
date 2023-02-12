@@ -29,6 +29,7 @@ class LM_Trainer(Trainer):
         self.valid_eval_loader = self._get_eval_loader(data, "valid")
         self.optimizer = self._get_optimizer()
         self.loss_op = self._get_loss_op()
+        self.data = data
 
     def _get_train_loader(self, data, train_idx):
         y_train = data.y[train_idx].squeeze(-1)
@@ -56,21 +57,22 @@ class LM_Trainer(Trainer):
             pin_memory=True,
         )
 
-    def _get_parallel_eval_loader(self, data, mode="test"):
-        assert mode in ["train", "valid", "test"]
-        eval_mask = data[f"{mode}_mask"]
-        dataset = TensorDataset(
-            data.input_ids[eval_mask], data.attention_mask[eval_mask], data.y[eval_mask].squeeze(-1)
-        )
-        dataloader = DataLoader(
-            dataset,
-            sampler=DistributedSampler(dataset, shuffle=False) if is_dist() else None,
-            batch_size=self.args.eval_batch_size,
-            shuffle=False,
-            num_workers=48,
-            pin_memory=True,
-        )
-        return dataloader
+    # def _get_parallel_eval_loader(self, mode="test"):
+    #     data = self.data
+    #     assert mode in ["train", "valid", "test"]
+    #     eval_mask = data[f"{mode}_mask"]
+    #     dataset = TensorDataset(
+    #         data.input_ids[eval_mask], data.attention_mask[eval_mask], data.y[eval_mask].squeeze(-1)
+    #     )
+    #     dataloader = DataLoader(
+    #         dataset,
+    #         sampler=DistributedSampler(dataset, shuffle=False) if is_dist() else None,
+    #         batch_size=self.args.eval_batch_size,
+    #         shuffle=False,
+    #         num_workers=48,
+    #         pin_memory=True,
+    #     )
+    #     return dataloader
 
     def training_step(self, input_ids, attention_mask, y):
         self.model.train()
@@ -105,10 +107,11 @@ class LM_Trainer(Trainer):
                 torch.save(self.model.state_dict(), ckpt_path)
                 logger.info("Saved ckpt: {}".format(ckpt_path))
                 # evaluate model on train and validation set
-                # train_acc = self.parallel_evaluate(mode="train")
-                # logger.info("epoch: {}, loss: {}, train_acc: {}".format(epoch + 1, loss, train_acc))
-                valid_acc = self.parallel_evaluate(mode="valid")
-                logger.info("epoch: {}, loss: {}, valid_acc: {}".format(epoch + 1, loss, valid_acc))
+                train_acc = self.evaluate(mode="train")
+                valid_acc = self.evaluate(mode="valid")
+                logger.info(
+                    "epoch: {}, loss: {}, train_acc:{}, valid_acc: {}".format(epoch + 1, loss, train_acc, valid_acc)
+                )
                 # early stop
                 if valid_acc > best_acc:
                     ckpt_path = os.path.join(
@@ -134,7 +137,7 @@ class LM_Trainer(Trainer):
         self.model.to(self.rank)
         logger.info("Start testing best model loaded from: {}".format(ckpt_path))
         # test_acc = self.evaluate(mode="test")
-        test_acc = self.parallel_evaluate(mode="test")
+        test_acc = self.evaluate(mode="test")
         logger.info("test time: {}".format(time.time() - test_t_start))
         logger.info("final test_acc: {}".format(test_acc))
         logger.info("Training finished, time: {}".format(time.time() - t_start))
@@ -161,21 +164,21 @@ class LM_Trainer(Trainer):
         acc = float(num_correct / num_total)
         return acc
 
-    def parallel_evaluate(self, mode="test"):
-        assert mode in ["train", "test", "valid"]
-        self.model.eval()
-        eval_loader = self._get_parallel_eval_loader(mode)
-        pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=self.args.disable_tqdm)
-        num_correct, num_total = 0, 0
-        for step, (input_ids, att_mask, y_true) in enumerate(eval_loader):
-            with torch.no_grad():
-                logits = self.model(input_ids.to(self.rank), att_mask.to(self.rank))
-            y_pred = logits.argmax(dim=-1, keepdim=True).to("cpu")
-            num_correct += (y_pred == y_true).sum()
-            num_total += y_true.shape[0]
-            pbar.update(1)
-        acc = float(num_correct / num_total)
-        return acc
+    # def parallel_evaluate(self, mode="test"):
+    #     assert mode in ["train", "test", "valid"]
+    #     self.model.eval()
+    #     eval_loader = self._get_parallel_eval_loader(mode)
+    #     pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=self.args.disable_tqdm)
+    #     num_correct, num_total = 0, 0
+    #     for step, (input_ids, att_mask, y_true) in enumerate(eval_loader):
+    #         with torch.no_grad():
+    #             logits = self.model(input_ids.to(self.rank), att_mask.to(self.rank))
+    #         y_pred = logits.argmax(dim=-1, keepdim=True).to("cpu")
+    #         num_correct += (y_pred == y_true).sum()
+    #         num_total += y_true.shape[0]
+    #         pbar.update(1)
+    #     acc = float(num_correct / num_total)
+    #     return acc
 
     def save_bert_x(self, data):
         """

@@ -29,8 +29,10 @@ def cleanup():
 def get_trainer_class(model_type):
     if model_type in ["Roberta", "Deberta"]:
         from .models.lms.trainer import LM_Trainer as Trainer
+    elif model_type in ["SAGN", "SIGN"]:
+        from .models.gnns.trainer import GNN_Trainer as Trainer
     else:
-        raise NotImplementedError("only support roberta and deberta now")
+        raise NotImplementedError("not implemented")
     return Trainer
 
 
@@ -74,14 +76,14 @@ def train(args):
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     set_single_env(rank, world_size)
-    if rank not in [-1, 0]:
-        # Make sure only the first process in distributed training will download model & vocab
-        torch.distributed.barrier()
+    # if rank not in [-1, 0]:
+    #     # Make sure only the first process in distributed training will download model & vocab
+    #     torch.distributed.barrier()
     # setup dataset: [ogbn-arxiv]
     data, split_idx, evaluator, processed_dir = load_data(args)
     model = load_model(args)
-    if rank == 0:
-        torch.distributed.barrier()
+    # if rank == 0:
+    #     torch.distributed.barrier()
     # trainer
     Trainer = get_trainer_class(args.model_type)
     trainer = Trainer(args, model, data, split_idx, evaluator)

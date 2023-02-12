@@ -17,15 +17,25 @@ from ...utils import dataset2foldername, is_dist
 logger = logging.getLogger(__name__)
 
 
-# TODO: This is a copy of LM_Trainer. Refactor to avoid code duplication.
 class GNN_Trainer(Trainer):
     def __init__(self, args, model, data, split_idx, evaluator):
-        super(GNN_Trainer, self).__init__(args, model, data, split_idx, evaluator)
+        self.args = args
+        self.split_idx = split_idx
+        self.evaluator = evaluator
+        self.model = self._init_model(model)
+        data = self._precompute(data)
+        self.train_loader = self._get_train_loader(data, split_idx["train"])
+        self.train_eval_loader = self._get_eval_loader(data, "train")
+        self.test_eval_loader = self._get_eval_loader(data, "test")
+        self.valid_eval_loader = self._get_eval_loader(data, "valid")
+        self.optimizer = self._get_optimizer()
+        self.loss_op = self._get_loss_op()
+        self.data = data
 
     def _get_train_loader(self, data, train_idx):
         y_train = data.y[train_idx].squeeze(-1)
-        input_ids, attention_mask = data.input_ids[train_idx], data.attention_mask[train_idx]
-        train_set = TensorDataset(input_ids, attention_mask, y_train)
+        xs_train = torch.cat([x[train_idx] for x in data.xs], -1)
+        train_set = TensorDataset(xs_train, y_train)
         train_loader = DataLoader(
             train_set,
             sampler=DistributedSampler(train_set, shuffle=True) if is_dist() else None,
@@ -39,7 +49,8 @@ class GNN_Trainer(Trainer):
     def _get_eval_loader(self, data, mode="test"):
         assert mode in ["train", "valid", "test"]
         eval_mask = data[f"{mode}_mask"]
-        dataset = TensorDataset(data.input_ids[eval_mask], data.attention_mask[eval_mask], data.y[eval_mask])
+        xs_eval = torch.cat([x[eval_mask] for x in data.xs], -1)
+        dataset = TensorDataset(xs_eval, data.y[eval_mask])
         return DataLoader(
             dataset,
             batch_size=self.args.eval_batch_size,
@@ -48,10 +59,26 @@ class GNN_Trainer(Trainer):
             pin_memory=True,
         )
 
-    def training_step(self, input_ids, attention_mask, y):
+    def _get_parallel_eval_loader(self, mode="test"):
+        data = self.data
+        assert mode in ["train", "valid", "test"]
+        eval_mask = data[f"{mode}_mask"]
+        xs_eval = torch.cat([x[eval_mask] for x in data.xs], -1)
+        dataset = TensorDataset(xs_eval, data.y[eval_mask].squeeze(-1))
+        dataloader = DataLoader(
+            dataset,
+            sampler=DistributedSampler(dataset, shuffle=False) if is_dist() else None,
+            batch_size=self.args.eval_batch_size,
+            shuffle=False,
+            num_workers=48,
+            pin_memory=True,
+        )
+        return dataloader
+
+    def training_step(self, xs, y):
         self.model.train()
         self.optimizer.zero_grad()
-        logits = self.model(input_ids, attention_mask)
+        logits = self.model(xs)
         loss = self.loss_op(logits, y.to(self.rank))
         loss.backward()
         self.optimizer.step()
@@ -68,6 +95,8 @@ class GNN_Trainer(Trainer):
             for step, batch_input in enumerate(
                 tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=disable_tqdm)
             ):
+                xs = batch_input[0]
+                batch_input[0] = [x.to(self.rank) for x in torch.split(xs, dim_feat, -1)]
                 batch_input = self._list_tensor_to_gpu(batch_input)
                 batch_loss = self.training_step(*batch_input)
                 loss += batch_loss
@@ -81,10 +110,13 @@ class GNN_Trainer(Trainer):
                 torch.save(self.model.state_dict(), ckpt_path)
                 logger.info("Saved ckpt: {}".format(ckpt_path))
                 # evaluate model on train and validation set
+                # train_acc = self.parallel_evaluate(mode="train")
+                # valid_acc = self.parallel_evaluate(mode="valid")
+
                 train_acc = self.evaluate(mode="train")
                 valid_acc = self.evaluate(mode="valid")
                 logger.info(
-                    "epoch: {}, loss: {}, train_acc: {}, valid_acc: {}".format(epoch + 1, loss, train_acc, valid_acc)
+                    "epoch: {}, loss: {}, train_acc:{}, valid_acc: {}".format(epoch + 1, loss, train_acc, valid_acc)
                 )
                 # early stop
                 if valid_acc > best_acc:
@@ -100,20 +132,24 @@ class GNN_Trainer(Trainer):
                     best_count += 1
                     if best_count >= 2:
                         break
+            dist.barrier()
 
-        test_t_start = time.time()
-        ckpt_path = os.path.join(
-            self.args.ckpt_dir,
-            "{}-best.pt".format(self.args.model_type),
-        )
-        ckpt = torch.load(ckpt_path, map_location="cpu")
-        self._load_state_dict(self.model, ckpt)
-        self.model.to(self.rank)
-        logger.info("Start testing best model loaded from: {}".format(ckpt_path))
-        test_acc = self.evaluate(mode="test")
-        logger.info("test time: {}".format(time.time() - test_t_start))
-        logger.info("final test_acc: {}".format(test_acc))
-        logger.info("Training finished, time: {}".format(time.time() - t_start))
+        if self.rank == 0:
+            test_t_start = time.time()
+            ckpt_path = os.path.join(
+                self.args.ckpt_dir,
+                "{}-best.pt".format(self.args.model_type),
+            )
+            ckpt = torch.load(ckpt_path, map_location="cpu")
+            self._load_state_dict(self.model, ckpt, is_dist=True)
+            self.model.to(self.rank)
+            logger.info("Start testing best model loaded from: {}".format(ckpt_path))
+            # test_acc = self.evaluate(mode="test")
+            test_acc = self.evaluate(mode="test")
+            logger.info("test time: {}".format(time.time() - test_t_start))
+            logger.info("final test_acc: {}".format(test_acc))
+            logger.info("Training finished, time: {}".format(time.time() - t_start))
+        dist.barrier()
 
     def evaluate(self, mode="test"):
         assert mode in ["train", "test", "valid"]
@@ -127,15 +163,33 @@ class GNN_Trainer(Trainer):
         eval_loader = eval_loader_list[mode]
         pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=self.args.disable_tqdm)
         num_correct, num_total = 0, 0
-        for step, (input_ids, att_mask, y_true) in enumerate(eval_loader):
+        for step, (xs, y_true) in enumerate(eval_loader):
+            xs = [x.to(self.rank) for x in torch.split(xs, dim_feat, -1)]
             with torch.no_grad():
-                logits = self.model(input_ids.to(self.rank), att_mask.to(self.rank))
+                logits = self.model(xs)
             y_pred = logits.argmax(dim=-1, keepdim=True).to("cpu")
             num_correct += (y_pred == y_true).sum()
             num_total += y_true.shape[0]
             pbar.update(1)
         acc = float(num_correct / num_total)
         return acc
+
+    # def parallel_evaluate(self, mode="test"):
+    #     assert mode in ["train", "test", "valid"]
+    #     self.model.eval()
+    #     eval_loader = self._get_parallel_eval_loader(mode)
+    #     pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=self.args.disable_tqdm)
+    #     num_correct, num_total = 0, 0
+    #     for step, (xs, y_true) in enumerate(eval_loader):
+    #         xs = [x.to(self.rank) for x in torch.split(xs, self.args.num_feats, -1)]
+    #         with torch.no_grad():
+    #             logits = self.model(xs)
+    #         y_pred = logits.argmax(dim=-1, keepdim=True).to("cpu")
+    #         num_correct += (y_pred == y_true).sum()
+    #         num_total += y_true.shape[0]
+    #         pbar.update(1)
+    #     acc = float(num_correct / num_total)
+    #     return acc
 
     def save_bert_x(self, data):
         """

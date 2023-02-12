@@ -8,11 +8,14 @@ import shutil
 import numpy as np
 import pandas as pd
 import torch
+import torch.distributed as dist
 from ogb.io.read_graph_pyg import read_graph_pyg
 from ogb.utils.url import download_url, extract_zip
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.transforms import ToSparseTensor
 from transformers import AutoTokenizer, BatchEncoding
+
+from ..utils import is_dist
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +49,17 @@ class OgbnArxivWithText(InMemoryDataset):
         }
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         # check if the dataset is already processed with the same tokenizer
+        rank = -1
+        if is_dist():
+            rank = os.environ["RANK"]
         metainfo = self.load_metainfo()
         if metainfo is not None and metainfo["tokenizer"] != tokenizer:
             logger.info("The tokenizer is changed. Re-processing the dataset.")
             os.rmdir(self.root, "processed")
         super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
-        self.save_metainfo()
+        if rank in [0, -1]:
+            self.save_metainfo()
+        dist.barrier()
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     def get_idx_split(self):
@@ -160,9 +168,9 @@ class OgbnArxivWithText(InMemoryDataset):
             json.dump(self.meta, outfile)
 
     def load_metainfo(self):
-        if not os.path.isfile(os.path.join(self.root, "processed/meta_info.json")):
-            return None
         r_path = os.path.join(self.root, "processed/meta_info.json")
+        if not os.path.exists(r_path):
+            return None
         with open(r_path, "r") as infile:
             json_obj = json.load(infile)
         return json_obj

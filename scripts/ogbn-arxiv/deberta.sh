@@ -3,7 +3,7 @@ model_type='Deberta'
 suffix='main'
 
 # training parameters
-eval_interval=2
+eval_interval=1
 lr=1e-4
 weight_decay=0.0
 batch_size=10
