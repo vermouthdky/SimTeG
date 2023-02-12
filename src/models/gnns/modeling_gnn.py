@@ -9,7 +9,7 @@ class SAGN(nn.Module):
         super(SAGN, self).__init__()
         self.gnn_model = PureSAGN(args, num_hops=args.gnn_num_layers + 1)
 
-    def forward(self, xs, input_ids, att_mask):
+    def forward(self, xs):
         return self.gnn_model(xs)
 
 
@@ -18,5 +18,5 @@ class SIGN(nn.Module):
         super(SIGN, self).__init__()
         self.gnn_model = PureSIGN(args, num_hops=args.gnn_num_layers + 1)
 
-    def forward(self, xs, input_ids, att_mask):
+    def forward(self, xs):
         return self.gnn_model(xs)

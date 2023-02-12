@@ -55,10 +55,14 @@ class Trainer:
         logger.info("Precomputing finished, time: {}".format(t_end - t_start))
         return data
 
-    def _load_state_dict(self, model, state_dict, strict=True):
+    def _load_state_dict(self, model, state_dict, strict=True, is_dist=False):
         own_state = model.state_dict()
+        if self.rank == 0:
+            __import__("ipdb").set_trace()
+        else:
+            dist.barrier()
         for name, param in state_dict.items():
-            if name[:7] == "module.":  # remove the "module." prefix
+            if name[:7] == "module." and not is_dist:  # remove the "module." prefix
                 name = name[7:]
             if name not in own_state:
                 if strict:
@@ -78,7 +82,7 @@ class Trainer:
         if self.args.cont:
             ckpt_name = os.path.join(self.args.ckpt_dir, self.args.ckpt_name)
             ckpt = torch.load(ckpt_name, map_location="cpu")
-            self._load_state_dict(model, ckpt)
+            self._load_state_dict(model, ckpt, is_dist=False)
             logging.info("load ckpt:{}".format(ckpt_name))
         model.to(self.rank)
         if self.world_size > 1:
@@ -189,7 +193,7 @@ class Trainer:
             "{}-best.pt".format(self.args.model_type),
         )
         ckpt = torch.load(ckpt_path, map_location="cpu")
-        self._load_state_dict(self.model, ckpt)
+        self._load_state_dict(self.model, ckpt, is_dist=True)
         self.model.to(self.rank)
         logger.info("Start testing best model loaded from: {}".format(ckpt_path))
         test_acc = self.evaluate(mode="test")
