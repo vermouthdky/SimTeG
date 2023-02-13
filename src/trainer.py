@@ -130,62 +130,57 @@ class Trainer(ABC):
                 loss += batch_loss
                 dist.barrier()
             loss /= len(self.train_loader)
-            if self.rank == 0 and (epoch + 1) % self.args.eval_interval == 0:
-                ckpt_path = os.path.join(self.args.ckpt_dir, "{}-epoch-{}.pt".format(self.args.model_type, epoch + 1))
-                torch.save(self.model.state_dict(), ckpt_path)
-                logger.info("Saved ckpt: {}".format(ckpt_path))
-                # evaluate model on train and validation set
+            # evalutation and early stop
+            if (epoch + 1) % self.args.eval_interval == 0:
+                ckpt_name = "{}-epoch-{}.pt".format(self.args.model_type, epoch + 1)
+                self.save_model(ckpt_name)
                 train_acc = self.evaluate(mode="train")
                 valid_acc = self.evaluate(mode="valid")
                 logger.info(
-                    "epoch: {}, loss: {}, train_acc{}, valid_acc: {}".format(epoch + 1, loss, train_acc, valid_acc)
+                    "epoch: {}, loss: {}, train_acc:{}, valid_acc: {}".format(epoch + 1, loss, train_acc, valid_acc)
                 )
                 # early stop
                 if valid_acc > best_acc:
-                    ckpt_path = os.path.join(
-                        self.args.ckpt_dir,
-                        "{}-best.pt".format(self.args.model_type),
-                    )
-                    torch.save(self.model.state_dict(), ckpt_path)
-                    logger.info("Best model saved to: {}".format(ckpt_path))
+                    ckpt_name = "{}-best.pt".format(self.args.model_type)
+                    self.save_model(ckpt_name)
                     best_acc = valid_acc
                     best_count = 0
                 else:
                     best_count += 1
                     if best_count >= 2:
                         break
-            dist.barrier()
 
-        if self.rank == 0:
-            test_t_start = time.time()
-            ckpt_path = os.path.join(
-                self.args.ckpt_dir,
-                "{}-best.pt".format(self.args.model_type),
-            )
-            ckpt = torch.load(ckpt_path, map_location="cpu")
-            self._load_state_dict(self.model, ckpt, is_dist=True)
-            self.model.to(self.rank)
-            logger.info("Start testing best model loaded from: {}".format(ckpt_path))
-            test_acc = self.evaluate(mode="test")
-            logger.info("test time: {}".format(time.time() - test_t_start))
-            logger.info("final test_acc: {}".format(test_acc))
-            logger.info("Training finished, time: {}".format(time.time() - t_start))
-        dist.barrier()
+        test_t_start = time.time()
+        ckpt_path = os.path.join(
+            self.args.ckpt_dir,
+            "{}-best.pt".format(self.args.model_type),
+        )
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        self._load_state_dict(self.model, ckpt, is_dist=True)
+        self.model.to(self.rank)
+        logger.info("Start testing best model loaded from: {}".format(ckpt_path))
+        test_acc = self.evaluate(mode="test")
+        logger.info("test time: {}".format(time.time() - test_t_start))
+        logger.info("final test_acc: {}".format(test_acc))
+        logger.info("Training finished, time: {}".format(time.time() - t_start))
 
     def evaluate(self, mode="test"):
         assert mode in ["train", "test", "valid"]
         self.model.eval()
         dim_feat = self.args.num_feats
         eval_loader = self._get_eval_loader(mode)
-        pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=self.args.disable_tqdm)
-        num_correct, num_total = 0, 0
-        for step, (xs, input_ids, att_mask, y_true) in enumerate(eval_loader):
-            xs = [x.to(self.rank) for x in torch.split(xs, dim_feat, -1)]
+        disable_tqdm = self.args.disable_tqdm or (is_dist() and self.rank > 0)
+        pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=disable_tqdm)
+        # NOTE torchmetrics support distributed inference
+        self.metric.reset()
+        for step, batch_input in enumerate(eval_loader):
+            batch_input = self._list_tensor_to_gpu(batch_input)
+            batch_input, y_true = batch_input[:-1], batch_input[-1]
             with torch.no_grad():
-                logits = self.model(xs, input_ids.to(self.rank), att_mask.to(self.rank))
-            y_pred = logits.argmax(dim=-1, keepdim=True).to("cpu")
-            num_correct += (y_pred == y_true).sum()
-            num_total += y_true.shape[0]
+                logits = self.model(batch_input)
+            y_pred = logits.argmax(dim=-1, keepdim=True)
+            y_true = y_true.to(self.rank)
+            acc = self.metric(y_pred, y_true)
             pbar.update(1)
-        acc = float(num_correct / num_total)
+        acc = self.metric.compute()
         return acc

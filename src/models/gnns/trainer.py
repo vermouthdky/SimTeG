@@ -113,7 +113,6 @@ class GNN_Trainer(Trainer):
         self._load_state_dict(self.model, ckpt, is_dist=True)
         self.model.to(self.rank)
         logger.info("Start testing best model loaded from: {}".format(ckpt_path))
-        # test_acc = self.evaluate(mode="test")
         test_acc = self.evaluate(mode="test")
         logger.info("test time: {}".format(time.time() - test_t_start))
         logger.info("final test_acc: {}".format(test_acc))
@@ -135,9 +134,6 @@ class GNN_Trainer(Trainer):
             y_pred = logits.argmax(dim=-1, keepdim=True)
             y_true = y_true.to(self.rank)
             acc = self.metric(y_pred, y_true)
-            # num_correct += (y_pred == y_true).sum()
-            # num_total += y_true.shape[0]
             pbar.update(1)
-        # acc = float(num_correct / num_total)
         acc = self.metric.compute()
         return acc

@@ -3,7 +3,7 @@ model_type='Deberta'
 suffix='main'
 
 # training parameters
-eval_interval=1
+eval_interval=3
 lr=1e-4
 weight_decay=0.0
 batch_size=10
@@ -15,7 +15,7 @@ hidden_dropout_prob=0.1
 # model parameters
 gnn_num_layers=4
 gnn_type=SAGN
-gnn_dropout=0.1
+gnn_dropout=0.5
 
 bash scripts/train.sh $model_type $dataset $suffix \
     $eval_interval \

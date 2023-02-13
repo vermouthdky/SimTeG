@@ -3,12 +3,12 @@ model_type='SAGN'
 suffix='main'
 
 # training parameters
-eval_interval=1
+eval_interval=5
 lr=1e-3
 weight_decay=0.0
 batch_size=5000
 eval_batch_size=1000
-epochs=1
+epochs=50
 accum_interval=5
 hidden_dropout_prob=0.1
 
