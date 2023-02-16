@@ -7,21 +7,11 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 
-from src.options import parse_args, save_args, load_args
-from src.run import train, test, save_bert_x
-from src.utils import set_logging, is_dist
-import logging
+from src.options import load_args, parse_args, save_args
+from src.run import save_bert_x, test, train
+from src.utils import is_dist, set_logging
 
 logger = logging.getLogger(__name__)
-
-"""
-TODO:
-- Implement the baselines
-    * X_PLM
-    * LM-Ft
-        - train deberta
-    * LM-Ft (x features) + SOTA GNN
-"""
 
 
 def set_env(random_seed):
@@ -40,9 +30,7 @@ def set_env(random_seed):
     random.seed(random_seed)
 
 
-def main():
-    args = parse_args()
-    save_args(args, args.output_dir)
+def main(args):
     set_logging()
     logger.info(args)
     set_env(args.random_seed)
@@ -57,4 +45,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    save_args(args, args.output_dir)
+    main(args)

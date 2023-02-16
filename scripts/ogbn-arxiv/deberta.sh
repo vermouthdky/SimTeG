@@ -3,19 +3,18 @@ model_type='Deberta'
 suffix='main'
 
 # training parameters
-eval_interval=3
-lr=1e-4
+eval_interval=1
+lr=1e-5
 weight_decay=0.0
 batch_size=10
 eval_batch_size=100
-epochs=50
-accum_interval=5
-hidden_dropout_prob=0.1
-
-# model parameters
-gnn_num_layers=4
-gnn_type=SAGN
-gnn_dropout=0.5
+epochs=10
+accum_interval=1
+hidden_dropout_prob=0.3
+header_dropout_prob=0.4
+attention_dropout_prob=0.1
+label_smoothing=0.3
+use_adapter=false
 
 bash scripts/train.sh $model_type $dataset $suffix \
     $eval_interval \
@@ -26,6 +25,7 @@ bash scripts/train.sh $model_type $dataset $suffix \
     $epochs \
     $accum_interval \
     $hidden_dropout_prob \
-    $gnn_num_layers \
-    $gnn_type \
-    $gnn_dropout
+    $header_dropout_prob \
+    $attention_dropout_prob \
+    $label_smoothing \
+    $use_adapter
