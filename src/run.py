@@ -11,7 +11,7 @@ from torch_geometric.transforms import ToUndirected
 from .datasets import load_dataset
 from .models.gbert.modeling_gbert import GBert
 from .models.gnns.modeling_gnn import SAGN
-from .models.lms.modeling_lm import Deberta, Roberta
+from .models.lms.modeling_lm import AdapterDeberta, AdapterRoberta, Deberta, Roberta
 from .utils import dataset2foldername, is_dist
 
 logger = logging.getLogger(__name__)
@@ -37,14 +37,17 @@ def get_trainer_class(model_type):
 
 
 def load_model(args):
-    model_class = {
-        "GBert": GBert,
-        "SAGN": SAGN,
-        "Roberta": Roberta,
-        "Deberta": Deberta,
-    }
-    assert args.model_type in model_class.keys()
-    return model_class[args.model_type](args)
+    if args.model_type == "GBert":
+        model = GBert(args)
+    elif args.model_type == "SAGN":
+        model = SAGN(args)
+    elif args.model_type == "Roberta":
+        model = AdapterRoberta(args) if args.use_adapter else Roberta(args)
+    elif args.model_type == "Deberta":
+        model = AdapterDeberta(args) if args.use_adapter else Deberta(args)
+    else:
+        raise NotImplementedError("Model {args.model_type} is not implemented")
+    return model
 
 
 def load_data(args):
@@ -76,14 +79,14 @@ def train(args):
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     set_single_env(rank, world_size)
-    # if rank not in [-1, 0]:
-    #     # Make sure only the first process in distributed training will download model & vocab
-    #     torch.distributed.barrier()
+    if rank not in [-1, 0]:
+        # Make sure only the first process in distributed training will download model & vocab
+        torch.distributed.barrier()
     # setup dataset: [ogbn-arxiv]
     data, split_idx, evaluator, processed_dir = load_data(args)
     model = load_model(args)
-    # if rank == 0:
-    #     torch.distributed.barrier()
+    if rank == 0:
+        torch.distributed.barrier()
     # trainer
     Trainer = get_trainer_class(args.model_type)
     trainer = Trainer(args, model, data, split_idx, evaluator)
@@ -113,7 +116,8 @@ def test(args):
     logger.info("valid_acc: {:.4f}".format(valid_acc))
     train_acc = trainer.evaluate(mode="train")
     logger.info("train_acc: {:.4f}".format(train_acc))
-    # cleanup()
+    cleanup()
+    return train_acc, valid_acc, test_acc
 
 
 def save_bert_x(args):

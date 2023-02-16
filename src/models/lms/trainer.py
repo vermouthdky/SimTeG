@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 class LM_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator):
-        super(LM_Trainer, self).__init__(args, model, data, split_idx, evaluator)
+    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
+        super(LM_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
 
     def _get_train_loader(self):
         data = self.data

@@ -25,14 +25,16 @@ eval_batch_size=$8
 epochs=$9
 accum_interval=${10}
 hidden_dropout_prob=${11}
+header_dropout_prob=${12}
+attention_dropout_prob=${13}
+label_smoothing=${14}
 
-# model parameters
-gnn_num_layers=${12}
-gnn_type=${13}
-gnn_dropout=${14}
-
-# use bert_x
-# use_bert_x=${14}
+use_adapter=${15}
+if use_adapter; then
+    use_adapter='--use_adapter'
+else
+    use_adapter=''
+fi
 
 torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --mode $mode \
@@ -48,6 +50,7 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --epochs $epochs \
     --accum_interval $accum_interval \
     --hidden_dropout_prob $hidden_dropout_prob \
-    --gnn_num_layers $gnn_num_layers \
-    --gnn_type $gnn_type \
-    --gnn_dropout $gnn_dropout 2>&1 | tee ${output_dir}/log.txt
+    --header_dropout_prob $header_dropout_prob \
+    --attention_dropout_prob $attention_dropout_prob \
+    --label_smoothing $label_smoothing \
+    $usedapter 2>&1 | tee ${output_dir}/log.txt
