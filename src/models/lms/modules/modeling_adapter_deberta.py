@@ -293,12 +293,13 @@ class FeedforwardAdapter(nn.Module):
     - The original paper: Parameter-Efficient Transfer Learning for NLP (https://arxiv.org/abs/2102.12226)
     """
 
-    def __init__(self, in_size, hidden_size=64, init_scale=1e-3):
+    def __init__(self, in_size, hidden_size=64, init_scale=1e-3, hidden_dropout_prob=0.2):
         super(FeedforwardAdapter, self).__init__()
         out_size = in_size
         self.init_scale = init_scale
         self.linear1 = nn.Linear(in_size, hidden_size)
         self.linear2 = nn.Linear(hidden_size, out_size)
+        self.dropout = StableDropout(hidden_dropout_prob)
         self.nonlinearty = nn.GELU()
         self.init_parameters()
 
@@ -310,6 +311,7 @@ class FeedforwardAdapter(nn.Module):
 
     def forward(self, input_tensor):
         net = self.linear1(input_tensor)
+        net = self.dropout(net)
         net = self.nonlinearty(net)
         net = self.linear2(net)
         return net + input_tensor
@@ -321,7 +323,11 @@ class AdapterDebertaSelfOutput(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = DebertaLayerNorm(config.hidden_size, config.layer_norm_eps)
         self.dropout = StableDropout(config.hidden_dropout_prob)
-        self.adapter = FeedforwardAdapter(config.hidden_size)
+        self.adapter = FeedforwardAdapter(
+            in_size=config.hidden_size,
+            hidden_size=config.adapter_hidden_size,
+            hidden_dropout_prob=config.hidden_dropout_prob,
+        )
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -389,7 +395,11 @@ class AdapterDebertaOutput(nn.Module):
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = DebertaLayerNorm(config.hidden_size, config.layer_norm_eps)
         self.dropout = StableDropout(config.hidden_dropout_prob)
-        self.adapter = FeedforwardAdapter(config.hidden_size)
+        self.adapter = FeedforwardAdapter(
+            in_size=config.hidden_size,
+            hidden_size=config.adapter_hidden_size,
+            hidden_dropout_prob=config.hidden_dropout_prob,
+        )
         self.config = config
 
     def forward(self, hidden_states, input_tensor):

@@ -1,3 +1,4 @@
+import gc
 import logging
 import os
 import time
@@ -23,7 +24,9 @@ def set_single_env(rank, world_size):
 
 
 def cleanup():
+    torch.cuda.empty_cache()
     dist.destroy_process_group()
+    gc.collect()
 
 
 def get_trainer_class(model_type):
@@ -58,7 +61,7 @@ def load_data(args):
         tokenizer=args.pretrained_model,
     )
     split_idx = dataset.get_idx_split()
-    data = dataset[0]
+    data = dataset.data
     # if use bert_x, change it
     if args.use_bert_x:
         saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
@@ -91,6 +94,7 @@ def train(args):
     Trainer = get_trainer_class(args.model_type)
     trainer = Trainer(args, model, data, split_idx, evaluator)
     trainer.train()
+    del trainer, model, data, split_idx, evaluator
     cleanup()
 
 
@@ -116,6 +120,7 @@ def test(args):
     logger.info("valid_acc: {:.4f}".format(valid_acc))
     train_acc = trainer.evaluate(mode="train")
     logger.info("train_acc: {:.4f}".format(train_acc))
+    del trainer, model, data, split_idx, evaluator
     cleanup()
     return train_acc, valid_acc, test_acc
 
@@ -137,4 +142,5 @@ def save_bert_x(args):
     Trainer = get_trainer_class(args.model_type)
     trainer = Trainer(args, model, data, split_idx, evaluator)
     trainer.save_bert_x(data)
+    del trainer, model, data, split_idx, evaluator
     cleanup()

@@ -4,13 +4,15 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
-import optuna
 import torch
 import torch.distributed as dist
 from torch import nn, optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchmetrics import Accuracy
 from tqdm import tqdm
+from transformers import get_scheduler
+
+import optuna
 
 from .utils import dataset2foldername, is_dist
 
@@ -30,6 +32,11 @@ class Trainer(ABC):
         # NOTE model and metric is also initialized here
         self.model, self.metric = self._init_model_and_metric(model)
         self.train_loader = self._get_train_loader()
+        self.eval_loader = {
+            "train": self._get_eval_loader("train"),
+            "valid": self._get_eval_loader("valid"),
+            "test": self._get_eval_loader("test"),
+        }
         self.optimizer = self._get_optimizer()
         self.loss_op = self._get_loss_op()
         self.result_dict = self._init_result_dict()
@@ -122,6 +129,14 @@ class Trainer(ABC):
     def _get_loss_op(self):
         return torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing)
 
+    def _get_scheduler(self, optimizer):
+        return get_scheduler(
+            name=self.args.scheduler_type,
+            optimizer=optimizer,
+            num_warmup_steps=self.args.warmup_steps,
+            num_training_steps=self.args.epochs * len(self.train_loader),
+        )
+
     def training_step(self, *inputs, **kwargs):
         self.model.train()
         self.optimizer.zero_grad()
@@ -208,7 +223,7 @@ class Trainer(ABC):
     def evaluate(self, mode="test"):
         assert mode in ["train", "test", "valid"]
         self.model.eval()
-        eval_loader = self._get_eval_loader(mode)
+        eval_loader = self.eval_loader[mode]
         disable_tqdm = self.args.disable_tqdm or (is_dist() and self.rank > 0)
         pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=disable_tqdm)
         # NOTE torchmetrics support distributed inference
@@ -228,5 +243,4 @@ class Trainer(ABC):
         t_end_eval = time.time()
         acc = self.metric.compute()
         loss /= len(eval_loader)
-        del eval_loader
         return acc, loss, t_end_eval - t_start_eval
