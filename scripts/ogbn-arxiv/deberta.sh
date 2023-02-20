@@ -4,16 +4,16 @@ suffix='main'
 
 # training parameters
 eval_interval=1
-lr=1e-5
-weight_decay=0.0
+lr=1.5e-5
+weight_decay=6.8e-5
 batch_size=10
 eval_batch_size=100
 epochs=10
 accum_interval=1
-hidden_dropout_prob=0.3
-header_dropout_prob=0.4
-attention_dropout_prob=0.1
-label_smoothing=0.3
+hidden_dropout_prob=0.12
+header_dropout_prob=0.35
+attention_dropout_prob=0.18
+label_smoothing=0.22
 use_adapter=false
 
 bash scripts/train.sh $model_type $dataset $suffix \

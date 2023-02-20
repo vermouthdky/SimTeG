@@ -40,6 +40,7 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --mode $mode \
     --model_type $model_type \
     --dataset $dataset \
+    --suffix $suffix \
     --ckpt_dir $ckpt_dir \
     --output_dir $output_dir \
     --eval_interval $eval_interval \

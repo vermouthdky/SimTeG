@@ -16,49 +16,47 @@ logger = logging.getLogger(__name__)
 
 
 class Gbert_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator):
-        self.args = args
-        self.data = data
-        self.split_idx = split_idx
-        self.evaluator = evaluator
-        # NOTE model and metric is also initialized here
-        self.model, self.metric = self._init_model_and_metric(model)
-        self._init_pseudos()
-        # initialize hidden_features for propogation
-        self.propogated_x = None
-        self.train_loader = self._get_train_loader()  # use pseudo labels
-        self.optimizer = self._get_optimizer()
-        self.loss_op = self._get_loss_op()
+    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
+        self._init_pseudos(split_idx["train"], data.y, args.num_labels)
+        super(Gbert_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
 
-    def _init_pseudos(self):
-        self.pseudo_train_idx = self.split_idx["train"].clone()
+    def _init_pseudos(self, train_idx, y_true, num_labels):
+        self.pseudo_train_idx = train_idx.clone()
         # for label propagation
-        self.y_embs = torch.zeros(self.data.y.size(0), self.args.num_labels)
+        self.y_embs = torch.zeros(y_true.size(0), num_labels)
         self.y_embs[self.pseudo_train_idx] = F.one_hot(
-            self.data.y[self.pseudo_train_idx],
-            num_classes=self.args.num_labels,
+            y_true[self.pseudo_train_idx],
+            num_classes=num_labels,
         ).float()
         # for self training
-        self.pseudo_y = torch.zeros_like(self.data.y)
+        self.pseudo_y = torch.zeros_like(y_true)
         self.pseudo_y[self.peusdo_train_idx] = self.data.y[self.peusdo_train_idx]
 
     def _get_train_loader(self):
+        # initialize hidden_features for propogation
+        self.propogated_x = None
         y_train = self.pseudo_y[self.pseudo_train_idx].squeeze(-1)
         input_ids, attention_mask = (
             self.data.input_ids[self.pseudo_train_idx],
             self.data.attention_mask[self.pseudo_train_idx],
         )
-        propogated_x = self.propogated_x[self.pseudo_train_idx] if self.propogated_x is not None else None
+        propogated_x = None
+        if self.propogated_x is not None:
+            propogated_x = self.propogated_x[self.pseudo_train_idx]
         train_set = TensorDataset(propogated_x, input_ids, attention_mask, y_train)
         train_loader = DataLoader(
             train_set,
             sampler=DistributedSampler(train_set, shuffle=True) if is_dist() else None,
             batch_size=self.args.batch_size,
             shuffle=False if is_dist() else True,
-            num_workers=48,
-            pin_memory=True,
+            # num_workers=48,
+            # pin_memory=True,
         )
         return train_loader
+
+    def _get_eval_loader(self, mode="test"):
+        assert mode in ["train", "valid", "test"]
+        pass
 
     def inference_and_evaluate(self, data):
         dataset = TensorDataset(self.propogated_x, data.input_ids, data.attention_mask, data.y)

@@ -32,8 +32,8 @@ class LM_Trainer(Trainer):
             sampler=DistributedSampler(train_set, shuffle=True) if is_dist() else None,
             batch_size=self.args.batch_size,
             shuffle=False if is_dist() else True,
-            num_workers=48,
-            pin_memory=True,
+            # num_workers=8,
+            # pin_memory=True,
         )
         return train_loader
 
@@ -47,8 +47,8 @@ class LM_Trainer(Trainer):
             sampler=DistributedSampler(dataset, shuffle=False) if is_dist() else None,
             batch_size=self.args.eval_batch_size,
             shuffle=False,
-            num_workers=24,
-            pin_memory=True,
+            # num_workers=8,
+            # pin_memory=True,
         )
 
     def save_bert_x(self, data):

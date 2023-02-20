@@ -2,16 +2,19 @@ import json
 import logging
 import os
 import random
+import warnings
 
 import numpy as np
 import torch
 import torch.multiprocessing as mp
 
-from src.options import load_args, parse_args, save_args
+from src.args import load_args, parse_args, save_args
 from src.run import save_bert_x, test, train
 from src.utils import is_dist, set_logging
 
 logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore", category=UserWarning)
+# warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
 
 def set_env(random_seed):

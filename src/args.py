@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--cont", type=bool, default=False)
     parser.add_argument("--local_rank", type=int)
     parser.add_argument("--num_trials", type=int, default=10)
+    parser.add_argument("--suffix", type=str, default="main")
 
     # parameters for data and model storage
     parser.add_argument("--data_folder", type=str, default="../data")
@@ -28,11 +29,11 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model",
         type=str,
-        default="microsoft/deberta-base",
+        default="microsoft/deberta-v3-base",
         help="has to be consistent with repo_id in huggingface",
     )
     parser.add_argument("--eval_interval", type=int, default=5)
-    parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
+    parser.add_argument("--scheduler_type", type=str, default="linear")
 
     # dataset args
     parser.add_argument("--num_labels", type=int)
@@ -42,6 +43,7 @@ def parse_args():
     parser.add_argument("--disable_tqdm", action="store_true", default=False)
     parser.add_argument("--use_bert_x", action="store_true", default=False)
     parser.add_argument("--use_adapter", action="store_true", default=False)
+    parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -53,8 +55,10 @@ def parse_args():
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.1, help="consistent with the one in bert")
     parser.add_argument("--header_dropout_prob", type=float, default=0.2)
     parser.add_argument("--attention_dropout_prob", type=float, default=0.1)
+    parser.add_argument("--adapter_hidden_size", type=int, default=64)
     parser.add_argument("--label_smoothing", type=float, default=0.3)
     parser.add_argument("--init_alpha", type=float, default=0.8)
+    parser.add_argument("--scheduler_warmup", type=float, default=0.6)
 
     # gnn hyperparameters
     parser.add_argument("--gnn_num_layers", type=int, default=2)
