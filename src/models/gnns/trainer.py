@@ -2,13 +2,14 @@ import logging
 import os
 import time
 
-import optuna
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from torch_geometric.transforms import SIGN
 from tqdm import tqdm
+
+import optuna
 
 from ...trainer import Trainer
 from ...utils import dataset2foldername, is_dist
@@ -39,14 +40,7 @@ class GNN_Trainer(Trainer):
         y_train = data.y[train_idx].squeeze(-1)
         xs_train = torch.cat([x[train_idx] for x in data.xs], -1)
         train_set = TensorDataset(xs_train, y_train)
-        train_loader = DataLoader(
-            train_set,
-            sampler=DistributedSampler(train_set, shuffle=True) if is_dist() else None,
-            batch_size=self.args.batch_size,
-            shuffle=False if is_dist() else True,
-            num_workers=8,
-        )
-        return train_loader
+        return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
 
     def _get_eval_loader(self, mode="test"):
         data = self.data
@@ -54,10 +48,4 @@ class GNN_Trainer(Trainer):
         eval_mask = data[f"{mode}_mask"]
         xs_eval = torch.cat([x[eval_mask] for x in data.xs], -1)
         dataset = TensorDataset(xs_eval, data.y[eval_mask])
-        return DataLoader(
-            dataset,
-            sampler=DistributedSampler(dataset, shuffle=False) if is_dist() else None,
-            batch_size=self.args.eval_batch_size,
-            shuffle=False,
-            num_workers=8,
-        )
+        return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)

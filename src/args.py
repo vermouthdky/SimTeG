@@ -26,14 +26,8 @@ def parse_args():
     parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
     parser.add_argument("--save_ckpt_per_valid", type=bool, default=False)
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
-    parser.add_argument(
-        "--pretrained_model",
-        type=str,
-        default="microsoft/deberta-v3-base",
-        help="has to be consistent with repo_id in huggingface",
-    )
+    parser.add_argument("--pretrained_model", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--eval_interval", type=int, default=5)
-    parser.add_argument("--scheduler_type", type=str, default="linear")
 
     # dataset args
     parser.add_argument("--num_labels", type=int)
@@ -43,6 +37,9 @@ def parse_args():
     parser.add_argument("--disable_tqdm", action="store_true", default=False)
     parser.add_argument("--use_bert_x", action="store_true", default=False)
     parser.add_argument("--use_adapter", action="store_true", default=False)
+    parser.add_argument(
+        "--use_SLE", action="store_true", default=False, help="whether to use self-label-enhancement (SLE)"
+    )
     parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
 
     # training hyperparameters
@@ -58,7 +55,12 @@ def parse_args():
     parser.add_argument("--adapter_hidden_size", type=int, default=64)
     parser.add_argument("--label_smoothing", type=float, default=0.3)
     parser.add_argument("--init_alpha", type=float, default=0.8)
-    parser.add_argument("--scheduler_warmup", type=float, default=0.6)
+    parser.add_argument("--scheduler_warmup_ratio", type=float, default=0.6)
+    parser.add_argument("--scheduler_type", type=str, default="linear")
+    parser.add_argument("--num_iterations", type=int, default=2)
+    # training hyperparameters for SLE
+    parser.add_argument("--mlp_dim_hidden", type=int, default=128)
+    parser.add_argument("--SLE_threshold", type=float, default=0.9)
 
     # gnn hyperparameters
     parser.add_argument("--gnn_num_layers", type=int, default=2)
@@ -86,6 +88,17 @@ def load_args(dir):
 
 def _post_init(args):
     args = _set_dataset_specific_args(args)
+    args = _set_pretrained_repo(args)
+    return args
+
+
+def _set_pretrained_repo(args):
+    dict = {
+        "Deberta": "microsoft/deberta-base",
+        "Roberta": "roberta-base",
+    }
+    assert args.model_type in dict.keys()
+    args.pretrained_model = dict[args.model_type]
     return args
 
 

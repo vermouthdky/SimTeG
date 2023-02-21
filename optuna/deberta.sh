@@ -1,6 +1,6 @@
 model_type='Deberta'
 dataset='ogbn-arxiv'
-suffix='optuna'
+suffix='main'
 
 epochs=10
 batch_size=3

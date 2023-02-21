@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -8,6 +9,8 @@ import torch
 import torch.distributed as dist
 from torch import nn, optim
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data.distributed import DistributedSampler
 from torchmetrics import Accuracy
 from tqdm import tqdm
 from transformers import get_scheduler
@@ -39,7 +42,8 @@ class Trainer(ABC):
         }
         self.optimizer = self._get_optimizer()
         self.loss_op = self._get_loss_op()
-        self.result_dict = self._init_result_dict()
+        self.lr_scheduler = self._get_scheduler()
+        self.result_dict = {}
         # initialize optuna
         self.trial = kwargs.get("trial", None)
 
@@ -51,25 +55,21 @@ class Trainer(ABC):
     def world_size(self):
         return int(os.environ["WORLD_SIZE"]) if is_dist() else 1
 
-    def _init_result_dict(self):
-        return {
-            "epoch": [],
-            "train_loss": [],
-            "valid_loss": [],
-            "test_loss": [],
-            "train_acc": [],
-            "valid_acc": [],
-            "test_acc": [],
-            "train_time_per_epoch": [],  # time of training per epoch
-            "inference_time_on_train_set": [],  # time of inference on train_set
-            "inference_time_on_valid_set": [],  # time of inference on valid_set
-            "inference_time_on_test_set": [],  # time of inference on test_set
-        }
+    @property
+    def disable_tqdm(self):
+        return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
-    def _add_result(self, dict: Dict[str, Any]):
-        for key, value in dict.items():
-            assert key in self.result_dict.keys()
-            self.result_dict[key].append(value)
+    def _add_result(self, key: str, value: Dict[str, Any]):
+        self.result_dict[key] = value
+
+    def save_result(self, path: str):
+        if self.rank in [0, -1]:
+            w_path = os.path.join(path, "results.json")
+            with open(w_path, "w") as f:
+                json.dump(self.result_dict, f)
+            logger.info("Save ckpt to: {}".format(w_path))
+        if is_dist():
+            dist.barrier()
 
     def _load_state_dict(self, model, state_dict, strict=True, is_dist=False):
         own_state = model.state_dict()
@@ -111,6 +111,15 @@ class Trainer(ABC):
     def _get_eval_loader(self, mode):
         pass
 
+    def _get_dataloader(self, dataset: TensorDataset, batch_size: int, shuffle: bool):
+        """
+        return a dataloader with DistributedSampler:
+        NOTE for inference, you have to use 'dist.gather()' to gather the results from all gpus
+        """
+        sampler = DistributedSampler(dataset, shuffle=shuffle) if is_dist() else None
+        shuffle = shuffle if sampler is None else False
+        return DataLoader(dataset, sampler=sampler, batch_size=batch_size, shuffle=shuffle)
+
     def save_model(self, ckpt_name):
         if self.rank in [0, -1]:
             ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
@@ -120,21 +129,20 @@ class Trainer(ABC):
             dist.barrier()
 
     def _get_optimizer(self):
-        return optim.AdamW(
-            self.model.parameters(),
-            lr=self.args.lr,
-            weight_decay=self.args.weight_decay,
-        )
+        return optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
 
     def _get_loss_op(self):
         return torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing)
 
-    def _get_scheduler(self, optimizer):
+    def _get_scheduler(self):
+        num_training_steps_per_epoch = len(self.train_loader)
+        num_training_steps = self.args.epochs * num_training_steps_per_epoch
+        num_warmup_steps = int(self.args.scheduler_warmup_ratio * num_training_steps)
         return get_scheduler(
             name=self.args.scheduler_type,
-            optimizer=optimizer,
-            num_warmup_steps=self.args.warmup_steps,
-            num_training_steps=self.args.epochs * len(self.train_loader),
+            optimizer=self.optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps,
         )
 
     def training_step(self, *inputs, **kwargs):
@@ -145,6 +153,8 @@ class Trainer(ABC):
         loss = self.loss_op(logits, y.to(self.rank))
         loss.backward()
         self.optimizer.step()
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
         return loss.item()
 
     def _list_tensor_to_gpu(self, list: List):
@@ -153,13 +163,12 @@ class Trainer(ABC):
     def train(self):
         t_start = time.time()
         best_acc, best_count = 0.0, 0
-        disable_tqdm = self.args.disable_tqdm or (is_dist() and self.rank > 0)
         for epoch in range(self.args.epochs):
             self.train_loader.sampler.set_epoch(epoch)
             loss = 0.0
             t_start_epoch = time.time()
             for step, batch_input in enumerate(
-                tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=disable_tqdm)
+                tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=self.disable_tqdm)
             ):
                 batch_input = self._list_tensor_to_gpu(batch_input)
                 batch_loss = self.training_step(*batch_input)
@@ -185,8 +194,8 @@ class Trainer(ABC):
                     "inference_time_on_train_set": train_time,
                     "inference_time_on_valid_set": valid_time,
                 }
-                logger.info("".join("{}:{} ".format(k, v) for k, v in result.items()))
-                self._add_result(result)
+                logger.info("".join("{}:{:.4f} ".format(k, v) for k, v in result.items()))
+                self._add_result(f"epoch_{epoch+1}", result)
                 if self.args.optuna and self.trial is not None:
                     self.trial.report(valid_acc, epoch + 1)
                     if self.trial.should_prune():
@@ -204,6 +213,7 @@ class Trainer(ABC):
                         break
 
         if self.args.optuna and self.trial is not None:
+            self.save_result(self.args.output_dir)
             return best_acc
 
         ckpt_path = os.path.join(
@@ -217,7 +227,8 @@ class Trainer(ABC):
         test_acc, test_loss, test_time = self.evaluate(mode="test")
         result = {"test_loss": test_loss, "test_acc": test_acc, "inference_time_on_test_set": test_time}
         logger.info("".join("{}:{} ".format(k, v) for k, v in result.items()))
-        self._add_result(result)
+        self._add_result("final_test", result)
+        self.save_result(self.args.output_dir)
         logger.info("Training finished, time: {}".format(time.time() - t_start))
 
     def evaluate(self, mode="test"):
