@@ -3,6 +3,8 @@ import os
 import torch
 from torch import nn
 from transformers import (  # AutoConfig,; AutoModel,
+    DebertaConfig,
+    DebertaModel,
     DebertaV2Config,
     DebertaV2Model,
     RobertaConfig,
@@ -45,15 +47,15 @@ class Roberta(nn.Module):
 class Deberta(nn.Module):
     def __init__(self, args):
         super(Deberta, self).__init__()
-        pretrained_repo = "microsoft/deberta-v3-base"
-        config = DebertaV2Config.from_pretrained(pretrained_repo)
+        pretrained_repo = "microsoft/deberta-base"
+        config = DebertaConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.classifier_dropout = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
-        self.bert_model = DebertaV2Model.from_pretrained(pretrained_repo, config=config)
+        self.bert_model = DebertaModel.from_pretrained(pretrained_repo, config=config)
         self.head = DebertaClassificationHead(config)
 
     def forward(self, input_ids, att_mask, return_bert_out=False):
@@ -68,8 +70,8 @@ class Deberta(nn.Module):
 class AdapterDeberta(nn.Module):
     def __init__(self, args):
         super(AdapterDeberta, self).__init__()
-        pretrained_repo = "microsoft/deberta-v3-base"
-        config = DebertaV2Model.from_pretrained(pretrained_repo)
+        pretrained_repo = "microsoft/deberta-base"
+        config = DebertaModel.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.classifier_dropout = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob

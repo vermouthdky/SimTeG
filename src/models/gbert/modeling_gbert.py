@@ -6,6 +6,7 @@ from torch import nn
 from transformers import AutoConfig, DebertaModel, RobertaModel
 from transformers import logging as transformers_logging
 
+from ..gnns.modules.EnGCN import GroupMLP
 from ..lms.modules import (
     AdapterDebertaModel,
     AdapterRobertaModel,
@@ -20,7 +21,9 @@ transformers_logging.set_verbosity_error()
 class GBert(nn.Module):
     def __init__(self, args):
         super(GBert, self).__init__()
-        self.bert_model, self.header = self._get_model(args)
+        self.bert_model, self.header = self._get_bert_model(args)
+        # TODO: should ablate it in the future
+        self.lp_model = self._get_label_propogation_model(args) if self.args.use_SLE else None
         self.alpha = nn.Parameter(torch.tensor(0.8), requires_grad=False)  # moving averge
 
     def _get_config(self, args):
@@ -34,7 +37,17 @@ class GBert(nn.Module):
         logger.info("Save model config to %s", args.output_dir)
         return config
 
-    def _get_model(self, args):
+    def _get_label_propogation_model(self, args):
+        return GroupMLP(
+            args.num_labels,
+            args.mlp_dim_hidden,
+            args.num_labels,
+            n_heads=1,
+            n_layers=3,
+            dropout=self.args.header_dropout_prob,
+        )
+
+    def _get_bert_model(self, args):
         pretrained_repo = args.pretrained_model
         config = self._get_config(args)
         if pretrained_repo == "microsoft/deberta-base" and args.use_adapter:
@@ -52,15 +65,6 @@ class GBert(nn.Module):
         else:
             raise NotImplementedError("Invalid model name")
         return bert, header
-
-    def get_adj_t(self, data):
-        deg = data.adj_t.sum(dim=1).to(torch.float)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        return deg_inv_sqrt.view(-1, 1) * data.adj_t * deg_inv_sqrt.view(1, -1)
-
-    def propogate(self, x, adj_t):
-        pass
 
     def forward(self, propogated_x, input_ids, att_mask, return_hidden=True):
         # NOTE: propogated_x = adj_T @ x
