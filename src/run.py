@@ -64,8 +64,11 @@ def load_data(args):
     split_idx = dataset.get_idx_split()
     data = dataset.data
     # explictly convert to sparse tensor
-    if args.model_type == "GBert" and args.dataset == "ogbn-arxiv":
-        transform = T.Compose([T.ToUndirected(), T.ToSparseTensor()])
+    if args.dataset == "ogbn-arxiv":
+        if args.model_type == "GBert":
+            transform = T.Compose([T.ToUndirected(), T.ToSparseTensor()])
+        else:
+            transform = T.ToUndirected()
         data = transform(data)
     # if use bert_x, change it
     if args.use_bert_x:

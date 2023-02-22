@@ -67,7 +67,7 @@ class GBert(nn.Module):
             raise NotImplementedError("Invalid model name")
         return bert, header
 
-    def forward(self, input_ids, att_mask, x_emb, y_emb, return_hidden=True):
+    def forward(self, input_ids, att_mask, x_emb=None, y_emb=None, return_hidden=False):
         # NOTE: propogated_x = adj_T @ x
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         hidden_features = bert_out[0]
@@ -76,7 +76,11 @@ class GBert(nn.Module):
         logits = self.header(hidden_features)
         if self.use_SLE and y_emb is not None:
             logits += self.lp_model(y_emb)
-        return logits, hidden_features if return_hidden else (logits,)
+
+        if return_hidden:
+            return logits, hidden_features
+        else:
+            return logits
 
 
 # class GBert_v1(nn.Module):  # use X_OGB and Roberta

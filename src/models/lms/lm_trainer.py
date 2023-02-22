@@ -49,7 +49,7 @@ class LM_Trainer(Trainer):
         for i, batch in enumerate(tqdm(dataloader, desc="saving bert featurs", disable=self.args.disable_tqdm)):
             input_ids, att_mask = batch
             with torch.no_grad():
-                _, bert_x = self.model(input_ids.to(self.rank), att_mask.to(self.rank), return_bert_out=True)
+                _, bert_x = self.model(input_ids.to(self.rank), att_mask.to(self.rank), return_hidden=True)
             bert_x_list.append(bert_x.to("cpu"))
         bert_x = torch.concat(bert_x_list, dim=0)
         saved_dir = os.path.join(self.args.data_folder, dataset2foldername(self.args.dataset), "processed", "bert_x.pt")

@@ -3,6 +3,7 @@ import os
 import sys
 from datetime import datetime
 
+import colorlog
 from torch.distributed import barrier
 
 
@@ -27,11 +28,12 @@ def set_logging():
     if root.hasHandlers():
         root.handlers.clear()
     root.setLevel(logging.INFO)
-    formatter = logging.Formatter("[%(name)s %(asctime)s] %(message)s")
+    log_format = "[%(name)s %(asctime)s] %(message)s"
+    color_format = "%(log_color)s" + log_format
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(colorlog.ColoredFormatter(color_format))
     console_handler.addFilter(RankFilter())
     root.addHandler(console_handler)
     # if not os.path.exists("./logs"):
