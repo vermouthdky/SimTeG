@@ -96,6 +96,7 @@ def _set_pretrained_repo(args):
     dict = {
         "Deberta": "microsoft/deberta-base",
         "Roberta": "roberta-base",
+        "GBert": "microsoft/deberta-base",
     }
     assert args.model_type in dict.keys()
     args.pretrained_model = dict[args.model_type]

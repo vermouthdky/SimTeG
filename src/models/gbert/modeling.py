@@ -23,7 +23,8 @@ class GBert(nn.Module):
         super(GBert, self).__init__()
         self.bert_model, self.header = self._get_bert_model(args)
         # TODO: should ablate it in the future
-        self.lp_model = self._get_label_propogation_model(args) if self.args.use_SLE else None
+        self.use_SLE = args.use_SLE
+        self.lp_model = self._get_label_propogation_model(args) if self.use_SLE else None
         self.alpha = nn.Parameter(torch.tensor(0.8), requires_grad=False)  # moving averge
 
     def _get_config(self, args):
@@ -31,7 +32,7 @@ class GBert(nn.Module):
         config = AutoConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.hidden_dropout_prob = args.hidden_dropout_prob
-        config.classifier_prob = args.header_dropout_prob
+        config.header_dropout_prob = args.header_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         logger.info("Save model config to %s", args.output_dir)
@@ -66,13 +67,15 @@ class GBert(nn.Module):
             raise NotImplementedError("Invalid model name")
         return bert, header
 
-    def forward(self, propogated_x, input_ids, att_mask, return_hidden=True):
+    def forward(self, input_ids, att_mask, x_emb, y_emb, return_hidden=True):
         # NOTE: propogated_x = adj_T @ x
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         hidden_features = bert_out[0]
-        if propogated_x is not None:
-            hidden_features[:, 0, :] = self.alpha * propogated_x + (1 - self.alpha) * hidden_features[:, 0, :]
+        if x_emb is not None:
+            hidden_features[:, 0, :] = self.alpha * x_emb + (1 - self.alpha) * hidden_features[:, 0, :]
         logits = self.header(hidden_features)
+        if self.use_SLE and y_emb is not None:
+            logits += self.lp_model(y_emb)
         return logits, hidden_features if return_hidden else (logits,)
 
 

@@ -6,13 +6,11 @@ import time
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch_geometric.transforms as T
 from ogb.nodeproppred import Evaluator
-from torch_geometric.transforms import ToUndirected
 
 from .datasets import load_dataset
-from .models.gbert.modeling_gbert import GBert
-from .models.gnns.modeling_gnn import SAGN
-from .models.lms.modeling_lm import AdapterDeberta, AdapterRoberta, Deberta, Roberta
+from .models import SAGN, AdapterDeberta, AdapterRoberta, Deberta, GBert, Roberta
 from .utils import dataset2foldername, is_dist
 
 logger = logging.getLogger(__name__)
@@ -31,9 +29,11 @@ def cleanup():
 
 def get_trainer_class(model_type):
     if model_type in ["Roberta", "Deberta"]:
-        from .models.lms.trainer import LM_Trainer as Trainer
+        from .models import LM_Trainer as Trainer
     elif model_type in ["SAGN", "SIGN"]:
-        from .models.gnns.trainer import GNN_Trainer as Trainer
+        from .models import GNN_Trainer as Trainer
+    elif model_type in ["GBert"]:
+        from .models import GBert_Trainer as Trainer
     else:
         raise NotImplementedError("not implemented")
     return Trainer
@@ -48,6 +48,8 @@ def load_model(args):
         model = AdapterRoberta(args) if args.use_adapter else Roberta(args)
     elif args.model_type == "Deberta":
         model = AdapterDeberta(args) if args.use_adapter else Deberta(args)
+    elif args.model_type == "GBert":
+        model = GBert(args)
     else:
         raise NotImplementedError("Model {args.model_type} is not implemented")
     return model
@@ -57,11 +59,14 @@ def load_data(args):
     dataset = load_dataset(
         args.dataset,
         root=args.data_folder,
-        transform=ToUndirected(),
         tokenizer=args.pretrained_model,
     )
     split_idx = dataset.get_idx_split()
     data = dataset.data
+    # explictly convert to sparse tensor
+    if args.model_type == "GBert" and args.dataset == "ogbn-arxiv":
+        transform = T.Compose([T.ToUndirected(), T.ToSparseTensor()])
+        data = transform(data)
     # if use bert_x, change it
     if args.use_bert_x:
         saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")

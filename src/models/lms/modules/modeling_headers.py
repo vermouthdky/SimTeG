@@ -10,7 +10,7 @@ class DebertaClassificationHead(nn.Module):
         self.pooler = ContextPooler(config)
         output_dim = self.pooler.output_dim
         self.classifier = nn.Linear(output_dim, config.num_labels)
-        dropout = getattr(config, "cls_dropout", config.classifier_dropout)
+        dropout = config.header_dropout_prob
         self.dropout = StableDropout(dropout)
 
     def forward(self, hidden_states):
@@ -20,7 +20,6 @@ class DebertaClassificationHead(nn.Module):
         return logits
 
 
-# NOTE: is this specific to Roberta or can it be used for other models?
 class RobertaClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""
 
@@ -28,7 +27,7 @@ class RobertaClassificationHead(nn.Module):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         classifier_dropout = (
-            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+            config.header_dropout_prob if config.header_dropout_prob is not None else config.hidden_dropout_prob
         )
         self.dropout = nn.Dropout(classifier_dropout)
         self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
