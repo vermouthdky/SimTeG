@@ -30,7 +30,7 @@ attention_dropout_prob=${13}
 label_smoothing=${14}
 
 use_adapter=${15}
-if use_adapter; then
+if $use_adapter; then
     use_adapter='--use_adapter'
 else
     use_adapter=''

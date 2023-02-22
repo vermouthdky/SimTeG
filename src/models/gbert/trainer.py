@@ -1,6 +1,8 @@
+import gc
 import logging
 import os
 import time
+from dataclasses import dataclass
 
 import torch
 import torch.distributed as dist
@@ -15,38 +17,60 @@ from ...utils import dataset2foldername, is_dist
 logger = logging.getLogger(__name__)
 
 
-class GBert_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
-        self._init_pseudos(split_idx["train"], data.y, args.num_labels)
-        super(GBert_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
-        self.inference_dataloader = self._get_inference_dataloader()
-        self.adj_t = self._get_adj_t(data.adj_t)
-
-    def _get_adj_t(self, adj_t):
+class InterTrainingData:
+    def __init__(self, train_idx, y_true, num_labels, adj_t):
+        """
+        ground_truth: train_idx, y_true
+        pesudos: pesudo_train_mask, pesudo_y
+        for propogation: x_embs, y_embs
+        adj: adj_t
+        """
+        # save ground truth
+        self.train_idx = train_idx
+        self.y_true = y_true
+        # set pesudo train mask
+        self.pesudo_train_mask = torch.zeros_like(y_true, dtype=torch.bool)
+        self.pesudo_train_mask[train_idx] = True
+        # for self training
+        self.pesudo_y = torch.zeros_like(y_true)
+        self.pesudo_y[train_idx] = y_true[train_idx]
+        # for x (feature) and y (label) propogation
+        self.x_embs = None
+        self.y_embs = torch.zeros(y_true.size(0), num_labels)
+        __import__("ipdb").set_trace()
+        self.y_embs[train_idx] = F.one_hot(
+            y_true[train_idx],
+            num_classes=num_labels,
+        ).float()
+        # set adj_t
         deg = adj_t.sum(dim=1).to(torch.float)
         deg_inv_sqrt = deg.pow(-0.5)
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        return deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
+        self.adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
+        del deg_inv_sqrt, deg
+        gc.collect()
+        logger.info("Initialized pseudo labels, rate: {:.4f}".format(self.pesudo_label_rate))
 
-    def _propogate(self, x):
-        return self.adj_t @ x
+    @property
+    def pesudo_label_rate(self):
+        return self.pesudo_train_mask.sum().item() / self.pesudo_train_mask.shape(0)
 
-    def _init_pseudos(self, train_idx, y_true, num_labels):
-        self.pseudo_train_mask = torch.zero_like(y_true, dtype=torch.bool)
-        self.pseudo_train_mask[train_idx] = True
-        # for label propagation
-        self.y_embs = torch.zeros(y_true.size(0), num_labels)
-        self.y_embs[self.pseudo_train_idx] = F.one_hot(
-            y_true[self.pseudo_train_idx],
-            num_classes=num_labels,
-        ).float()
-        # for self training
-        self.pseudo_y = torch.zeros_like(y_true)
-        self.pseudo_y[self.peusdo_train_idx] = self.data.y[self.peusdo_train_idx]
-        # for propogation
-        self.propogated_x = None
-        pesudo_label_rate = self.pseudo_train_idx.sum().item() / self.pseudo_train_idx.size(0)
-        logger.info("Initialized pseudo labels, rate: {:.4f}".format(}")
+    def update(self, SLE_mask, SLE_y):
+        # update self training data
+        self.pesudo_train_mask = SLE_mask | self.pesudo_train_mask
+        self.pesudo_y[SLE_mask] = SLE_y
+        self.pesudo_y[self.train_idx] = self.y_true[self.train_idx]
+        # propogate x_embs and y_embs
+        assert self.x_embs is not None
+        self.x_embs = self.adj_t @ self.x_embs
+        self.y_embs = self.adj_t @ self.y_embs
+
+
+class GBert_Trainer(Trainer):
+    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
+        self.it_data = InterTrainingData(split_idx["train"], data.y, args.num_labels, data.adj_t)
+        super(GBert_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
+        self.inference_dataloader = self._get_inference_dataloader()
 
     def _get_inference_dataloader(self):
         inference_set = TensorDataset(self.propogated_x, self.data.input_ids, self.data.attention_mask)
@@ -54,15 +78,17 @@ class GBert_Trainer(Trainer):
         return DataLoader(inference_set, batch_size=self.args.eval_batch_size, shuffle=False)
 
     def _get_train_loader(self):
-        # initialize hidden_features for propogation
-        y_train = self.pseudo_y[self.pseudo_train_idx].squeeze(-1)
-        input_ids = self.data.input_ids[self.pseudo_train_idx]
-        attention_mask = self.data.attention_mask[self.pseudo_train_idx]
-        propogated_x = None
-        if self.propogated_x is not None:
-            propogated_x = self.propogated_x[self.pseudo_train_idx]
+        train_mask = self.it_data.pesudo_train_mask
 
-        train_set = TensorDataset(propogated_x, input_ids, attention_mask, y_train)
+        y_train = self.it_data.pesudo_y[train_mask].squeeze(-1)
+        input_ids = self.data.input_ids[train_mask]
+        attention_mask = self.data.attention_mask[train_mask]
+        y_embs = self.y_embs[train_mask]
+        x_embs = None
+        if self.it_data.x_embs is not None:
+            x_embs = self.it_data.x_embs[train_mask]
+
+        train_set = TensorDataset(input_ids, attention_mask, x_embs, y_embs, y_train)
         return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
 
     def _get_eval_loader(self, mode="test"):
@@ -95,7 +121,7 @@ class GBert_Trainer(Trainer):
             loss = self.loss_op(logits[split_idx], self.data.y[split_idx]).item()
             results[f"{split}_acc"] = acc
             results[f"{split}_loss"] = loss
-        return hidden_features, results
+        return hidden_features, logits, results
 
     @torch.no_grad()
     def inference_step(self, *inputs):
@@ -116,14 +142,19 @@ class GBert_Trainer(Trainer):
             self._load_state_dict(self.model, ckpt, is_dist=True)
             self.model.to(self.rank)
             logger.info("initialize iter {iter} model with ckpt loaded from: {}".format(iter, ckpt_path))
-            # NOTE inference to compute self.propogated_x
-            hidden_features, results = self.inference_and_evaluate()
+            # NOTE inference for SLE and propogation
+            hidden_features, logits, results = self.inference_and_evaluate()
             self._add_result(f"iter_{iter}_final_test", results)
             logger.info("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
-            # NOTE update self.propogated_x and self.y_embs, further update self.train_loader
-            self.propogated_x = self._propogate(hidden_features)
-            self.y_embs = self._propogate(self.y_embs)
-            return
+
+            # NOTE self learning and propogation
+            val, pred = torch.max(F.softmax(logits, dim=1), dim=1)
+            SLE_mask = val > self.args.SLE_threshold
+            SLE_pred = pred[SLE_mask]
+            self.it_data.update(SLE_mask, SLE_pred)
+            del hidden_features, logits, SLE_mask, SLE_pred, val, pred
+            gc.collect()
+            self.train_loader = self._get_train_loader()
 
     def _train_one_iteration(self, iter: int):
         t_start = time.time()

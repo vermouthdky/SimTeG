@@ -26,7 +26,7 @@ class OgbnArxivWithText(InMemoryDataset):
         root="data",
         transform=None,
         pre_transform=None,
-        tokenizer="microsoft/deberta-v3-base",
+        tokenizer="microsoft/deberta-base",
     ):
         self.name = "ogbn-arxiv"  ## original name, e.g., ogbn-proteins
         self.dir_name = "_".join(self.name.split("-"))
@@ -49,19 +49,21 @@ class OgbnArxivWithText(InMemoryDataset):
         }
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
         # check if the dataset is already processed with the same tokenizer
-        rank = -1
-        if is_dist():
-            rank = int(os.environ["RANK"])
+        # rank = -1
+        # if is_dist():
+        #     rank = int(os.environ["RANK"])
 
-        if rank in [0, -1]:
-            metainfo = self.load_metainfo()
-            if metainfo is not None and metainfo["tokenizer"] != tokenizer:
-                logger.info("The tokenizer is changed. Re-processing the dataset.")
-                # os.rmdir(os.path.join(self.root, "processed"))
-                shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
-            super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
-            self.save_metainfo()
-        dist.barrier()
+        # if rank not in [-1, 0]:
+        #     dist.barrier()
+        metainfo = self.load_metainfo()
+        if metainfo is not None and metainfo["tokenizer"] != tokenizer:
+            logger.info("The tokenizer is changed. Re-processing the dataset.")
+            # os.rmdir(os.path.join(self.root, "processed"))
+            shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
+        self.save_metainfo()
+        super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
+        # if rank == 0:
+        #     dist.barrier()
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     def get_idx_split(self):

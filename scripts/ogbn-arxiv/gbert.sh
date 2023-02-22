@@ -1,21 +1,20 @@
 dataset='ogbn-arxiv'
 model_type='GBert'
-suffix='adapter'
+suffix='main'
 
 # training parameters
-eval_interval=5
-lr=1e-4
-weight_decay=0.0
-batch_size=20
-eval_batch_size=300
-epochs=50
-accum_interval=5
-hidden_dropout_prob=0.5
-
-# model parameters
-gnn_num_layers=4
-gnn_type=SAGN
-gnn_dropout=0.5
+eval_interval=1
+lr=2e-5
+weight_decay=5e-5
+batch_size=10
+eval_batch_size=100
+epochs=10
+accum_interval=1
+hidden_dropout_prob=0.12
+header_dropout_prob=0.35
+attention_dropout_prob=0.18
+label_smoothing=0.22
+use_adapter=false
 
 bash scripts/train.sh $model_type $dataset $suffix \
     $eval_interval \
@@ -26,6 +25,7 @@ bash scripts/train.sh $model_type $dataset $suffix \
     $epochs \
     $accum_interval \
     $hidden_dropout_prob \
-    $gnn_num_layers \
-    $gnn_type \
-    $gnn_dropout
+    $header_dropout_prob \
+    $attention_dropout_prob \
+    $label_smoothing \
+    $use_adapter
