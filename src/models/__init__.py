@@ -1,6 +1,6 @@
-from .gbert.modeling import GBert
-from .gbert.trainer import GBert_Trainer
-from .gnns.modeling import SAGN, SIGN
-from .gnns.trainer import GNN_Trainer
-from .lms.modeling import AdapterDeberta, AdapterRoberta, Deberta, Roberta
-from .lms.trainer import LM_Trainer
+from .gbert.gbert_modeling import GBert
+from .gbert.gbert_trainer import GBert_Trainer
+from .gnns.gnn_modeling import SAGN, SIGN
+from .gnns.gnn_trainer import GNN_Trainer
+from .lms.lm_modeling import AdapterDeberta, AdapterRoberta, Deberta, Roberta
+from .lms.lm_trainer import LM_Trainer

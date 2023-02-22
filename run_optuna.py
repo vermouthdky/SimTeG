@@ -131,6 +131,6 @@ def run(n_trials):
 
 
 if __name__ == "__main__":
-    n_trials = 20
+    n_trials = 10
     run(n_trials)
     # load_study()

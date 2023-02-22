@@ -152,7 +152,12 @@ class Trainer(ABC):
         logits = self.model(*inputs)
         loss = self.loss_op(logits, y.to(self.rank))
         loss.backward()
-        self.optimizer.step()
+        step = kwargs.get("step", 1)
+        accum_interval = kwargs.get("accum_interval", 1)
+        batch_len = kwargs.get("batch_len", 1)
+        if ((step + 1) % accum_interval == 0) or ((step + 1) == batch_len):
+            self.optimizer.step()
+            self.optimizer.zero_grad()
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
         return loss.item()
@@ -160,8 +165,7 @@ class Trainer(ABC):
     def _list_tensor_to_gpu(self, list: List):
         return [input.to(self.rank) if isinstance(input, torch.Tensor) else input for input in list]
 
-    def train(self):
-        t_start = time.time()
+    def train_once(self, iter=-1):
         best_acc, best_count = 0.0, 0
         for epoch in range(self.args.epochs):
             self.train_loader.sampler.set_epoch(epoch)
@@ -171,7 +175,8 @@ class Trainer(ABC):
                 tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=self.disable_tqdm)
             ):
                 batch_input = self._list_tensor_to_gpu(batch_input)
-                batch_loss = self.training_step(*batch_input)
+                kwargs = {"step": step, "accum_interval": self.args.accum_interval, "len_batch": len(self.train_loader)}
+                batch_loss = self.training_step(*batch_input, **kwargs)
                 loss += batch_loss
                 dist.barrier()
             t_end_epoch = time.time()
@@ -180,7 +185,7 @@ class Trainer(ABC):
             # evalutation and early stop
             if (epoch + 1) % self.args.eval_interval == 0:
                 if self.args.save_ckpt_per_valid:
-                    ckpt_name = "{}-epoch-{}.pt".format(self.args.model_type, epoch + 1)
+                    ckpt_name = "{}_iter_{}_epoch_{}.pt".format(self.args.model_type, iter, epoch + 1)
                     self.save_model(ckpt_name)
                 train_acc, train_loss, train_time = self.evaluate(mode="train")
                 valid_acc, valid_loss, valid_time = self.evaluate(mode="valid")
@@ -194,14 +199,16 @@ class Trainer(ABC):
                     "inference_time_on_train_set": train_time,
                     "inference_time_on_valid_set": valid_time,
                 }
-                logger.info("".join("{}:{:.4f} ".format(k, v) for k, v in result.items()))
-                self._add_result(f"epoch_{epoch+1}", result)
+                logger.warning("".join("{}:{:.4f} ".format(k, v) for k, v in result.items()))
+                self._add_result(f"iter_{iter}_epoch_{epoch+1}", result)
                 if self.args.optuna and self.trial is not None:
                     self.trial.report(valid_acc, epoch + 1)
-                    if self.trial.should_prune():
+                    # if not iterative pruning, prune it if necessary
+                    # else we do pruning in the outer loop
+                    if iter == -1 and self.trial.should_prune():
                         raise optuna.exceptions.TrialPruned()
                 # record loss and accs
-                # early stop
+                # explictly early stop
                 if valid_acc > best_acc:
                     ckpt_name = "{}-best.pt".format(self.args.model_type)
                     self.save_model(ckpt_name)
@@ -211,7 +218,11 @@ class Trainer(ABC):
                     best_count += 1
                     if best_count >= 2:
                         break
+        return best_acc  # best valid acc
 
+    def train(self):
+        t_start = time.time()
+        best_acc = self.train_once()
         if self.args.optuna and self.trial is not None:
             self.save_result(self.args.output_dir)
             return best_acc
