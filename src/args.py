@@ -28,6 +28,7 @@ def parse_args():
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
     parser.add_argument("--pretrained_model", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--eval_interval", type=int, default=5)
+    parser.add_argument("--eval_train_set", type=bool, default=False)
 
     # dataset args
     parser.add_argument("--num_labels", type=int)
@@ -54,10 +55,10 @@ def parse_args():
     parser.add_argument("--attention_dropout_prob", type=float, default=0.1)
     parser.add_argument("--adapter_hidden_size", type=int, default=64)
     parser.add_argument("--label_smoothing", type=float, default=0.3)
-    parser.add_argument("--init_alpha", type=float, default=0.8)
     parser.add_argument("--scheduler_warmup_ratio", type=float, default=0.6)
     parser.add_argument("--scheduler_type", type=str, default="linear")
-    parser.add_argument("--num_iterations", type=int, default=2)
+    parser.add_argument("--num_iterations", type=int, default=4)
+    parser.add_argument("--avg_alpha", type=float, default=0.5)
     # training hyperparameters for SLE
     parser.add_argument("--mlp_dim_hidden", type=int, default=128)
     parser.add_argument("--SLE_threshold", type=float, default=0.9)

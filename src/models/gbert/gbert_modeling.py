@@ -24,8 +24,8 @@ class GBert(nn.Module):
         self.bert_model, self.header = self._get_bert_model(args)
         # TODO: should ablate it in the future
         self.use_SLE = args.use_SLE
+        self.alpha = args.avg_alpha  # moving averge
         self.lp_model = self._get_label_propogation_model(args) if self.use_SLE else None
-        self.alpha = nn.Parameter(torch.tensor(0.8), requires_grad=False)  # moving averge
 
     def _get_config(self, args):
         pretrained_repo = args.pretrained_model
@@ -45,7 +45,7 @@ class GBert(nn.Module):
             args.num_labels,
             n_heads=1,
             n_layers=3,
-            dropout=self.args.header_dropout_prob,
+            dropout=args.header_dropout_prob,
         )
 
     def _get_bert_model(self, args):

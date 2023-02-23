@@ -17,13 +17,15 @@ from ...utils import dataset2foldername, is_dist
 logger = logging.getLogger(__name__)
 
 
-class SLE_Data:
-    def __init__(self, train_idx, y_true, num_labels, use_SLE=True):
+class SLE:
+    def __init__(self, train_idx, y_true, num_labels, SLE_threshold, use_SLE=True):
         """
         ground_truth: train_idx, y_true
         pesudos: pesudo_train_mask, pesudo_y
         for propogation: y_embs
         """
+        self.enabled = use_SLE
+        self.threshold = SLE_threshold
         # save ground truth
         self.y_true = y_true.view(-1)
         self.train_mask = torch.zeros_like(self.y_true, dtype=torch.bool)
@@ -47,28 +49,28 @@ class SLE_Data:
     def pesudo_label_rate(self):
         return self.pesudo_train_mask.sum() / self.pesudo_train_mask.shape[0]
 
-    def update(self, SLE_mask, SLE_y, adj_t):
+    def update(self, logits, adj_t):
+        if not self.enabled:
+            return
         # self training
+        val, pred = torch.max(F.softmax(logits, dim=1), dim=1)
+        SLE_mask = val > self.threshold
+        SLE_pred = pred[SLE_mask]
         self.pesudo_train_mask = SLE_mask | self.pesudo_train_mask
-        self.pesudo_y[SLE_mask] = SLE_y
+        self.pesudo_y[SLE_mask] = SLE_pred
         self.pesudo_y[self.train_mask] = self.y_true[self.train_mask]
         # label propogation
         self.y_embs = adj_t @ self.y_embs
 
 
-class SupportNoneTensorDataset(TensorDataset):
-    def __init__(self, *tensors):
-        tensors = [t for t in tensors if t is not None]
-        super(SupportNoneTensorDataset, self).__init__(*tensors)
-
-
 class GBert_Trainer(Trainer):
     def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
-        self.sle_data = SLE_Data(split_idx["train"], data.y, args.num_labels, args.use_SLE)
+        self.sle = SLE(split_idx["train"], data.y, args.num_labels, args.SLE_threshold, args.use_SLE)
+        self.x_embs = None
+        self.iter = 0
         super(GBert_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
         self.inference_dataloader = self._get_inference_dataloader()
         self.adj_t = self._init_adj_t(data.adj_t)
-        self.x_embs = None
 
     def _init_adj_t(self, adj_t):
         deg = adj_t.sum(dim=1).to(torch.float)
@@ -76,33 +78,35 @@ class GBert_Trainer(Trainer):
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         return deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
 
+    def _get_dataset(self, mask: torch.Tensor, use_pesudo: bool):
+        if use_pesudo:
+            y = self.sle.pesudo_y[mask].view(-1)
+        else:
+            y = self.data.y[mask].view(-1)
+        input_ids = self.data.input_ids[mask]
+        attention_mask = self.data.attention_mask[mask]
+        y_embs, x_embs = None, None
+        if self.iter > 0:
+            y_embs = self.sle.y_embs[mask] if self.sle.enabled else None
+            x_embs = self.x_embs[mask]
+        tensors = [input_ids, attention_mask, x_embs, y_embs, y]
+        tensors = [t for t in tensors if t is not None]
+        return TensorDataset(*tensors)
+
     def _get_inference_dataloader(self):
-        inference_set = SupportNoneTensorDataset(
-            self.data.input_ids, self.data.attention_mask, self.x_embs, self.sle_data.y_embs
-        )
+        mask = torch.ones(self.data.num_nodes, dtype=torch.bool)
+        inference_set = self._get_dataset(mask, use_pesudo=False)
         return DataLoader(inference_set, batch_size=self.args.eval_batch_size, shuffle=False)
 
     def _get_train_loader(self):
-        train_mask = self.sle_data.pesudo_train_mask
-        y_train = self.sle_data.pesudo_y[train_mask].view(-1)
-        input_ids = self.data.input_ids[train_mask]
-        attention_mask = self.data.attention_mask[train_mask]
-        y_embs = self.sle_data.y_embs[train_mask] if self.sle_data.y_embs is not None else None
-        x_embs = self.x_embs[train_mask] if self.x_embs is not None else None
-
-        train_set = SupportNoneTensorDataset(input_ids, attention_mask, x_embs, y_embs, y_train)
+        train_mask = self.sle.pesudo_train_mask
+        train_set = self._get_dataset(train_mask, use_pesudo=True)
         return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
 
     def _get_eval_loader(self, mode="test"):
         assert mode in ["train", "valid", "test"]
         eval_mask = self.split_idx[mode]
-        y = self.sle_data.pesudo_y[eval_mask].view(-1)
-        input_ids = self.data.input_ids[eval_mask]
-        attention_mask = self.data.attention_mask[eval_mask]
-        y_embs = self.sle_data.y_embs[eval_mask] if self.sle_data.y_embs is not None else None
-        x_embs = self.x_embs[eval_mask] if self.x_embs is not None else None
-
-        dataset = SupportNoneTensorDataset(input_ids, attention_mask, x_embs, y_embs, y)
+        dataset = self._get_dataset(eval_mask, use_pesudo=False)
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
     def inference_and_evaluate(self):
@@ -116,9 +120,10 @@ class GBert_Trainer(Trainer):
         pbar = tqdm(dataloader, desc="Inference and evaluating", disable=self.disable_tqdm)
         for step, batch_input in enumerate(dataloader):
             batch_input = self._list_tensor_to_gpu(batch_input)
-            logits, hidden_features = self.inference_step(batch_input)
+            logits, hidden_features = self.inference_step(*batch_input)
             hidden_features_list.append(hidden_features.cpu())
             logits_list.append(logits.cpu())
+            pbar.update(1)
         hidden_features = torch.cat(hidden_features_list, dim=0)
         logits = torch.cat(logits_list, dim=0)
         results = {}
@@ -132,38 +137,35 @@ class GBert_Trainer(Trainer):
 
     @torch.no_grad()
     def inference_step(self, *inputs):
-        return self.model(*inputs, return_hidden=True)
+        return self.model(*inputs[:-1], return_hidden=True)
 
     def train(self):
-        for iter in range(self.args.num_iterations + 1):
+        for iter in range(self.args.num_iterations):
             logger.warning(f"\n*************** Start iter {iter} training ***************\n")
             best_valid_acc = self.train_once(iter)
-            # if iter == self.args.num_iterations:
-            #     break
+            logger.info("Iter {} Best valid acc: {:.4f}".format(iter, best_valid_acc))
             logger.warning(f"\n*************** Start iter {iter} testing and Postprocessing ***************\n")
             # NOTE init model for the next iteration
             test_t_start = time.time()
-            ckpt_path = os.path.join(self.args.ckpt_dir, "{}-iter{}-best.pt".format(self.args.model_type, iter))
+            ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, iter))
             ckpt = torch.load(ckpt_path, map_location="cpu")
             self._load_state_dict(self.model, ckpt, is_dist=True)
             self.model.to(self.rank)
             logger.info("initialize iter {iter} model with ckpt loaded from: {}".format(iter, ckpt_path))
             # NOTE inference for SLE and propogation
-            hidden_features, logits, results = self.inference_and_evaluate()
+            if self.rank == 0:
+                hidden_features, logits, results = self.inference_and_evaluate()
+            dist.barrier()
             self._add_result(f"iter_{iter}_final_test", results)
-            self.save_result()
+            self.save_result(self.args.output_dir)
             logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
 
+            self.iter += 1
             # NOTE SLE
             if self.args.SLE:
-                val, pred = torch.max(F.softmax(logits, dim=1), dim=1)
-                SLE_mask = val > self.args.SLE_threshold
-                SLE_pred = pred[SLE_mask]
-                self.sle_data.update(SLE_mask, SLE_pred, self.adj_t)
-                del SLE_mask, SLE_pred, val, pred
-
+                self.sle.update(logits, self.adj_t)
             self.x_embs = self.adj_t @ hidden_features
             del hidden_features, logits
+            self.train_loader = self._get_train_loader()
             gc.collect()
             torch.cuda.empty_cache()
-            self.train_loader = self._get_train_loader()
