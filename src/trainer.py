@@ -1,3 +1,4 @@
+import gc
 import json
 import logging
 import os
@@ -100,7 +101,7 @@ class Trainer(ABC):
         model.metric = metric
         model.to(self.rank)
         if self.world_size > 1:
-            model = DDP(model, device_ids=[self.rank], output_device=self.rank)
+            model = DDP(model, device_ids=[self.rank], output_device=self.rank, find_unused_parameters=True)
         return model, metric
 
     @abstractmethod
@@ -147,7 +148,7 @@ class Trainer(ABC):
 
     def training_step(self, *inputs, **kwargs):
         self.model.train()
-        self.optimizer.zero_grad()
+        # self.optimizer.zero_grad()
         inputs, y = inputs[:-1], inputs[-1]
         logits = self.model(*inputs)
         loss = self.loss_op(logits, y.to(self.rank))
@@ -187,7 +188,10 @@ class Trainer(ABC):
                 if self.args.save_ckpt_per_valid:
                     ckpt_name = "{}_iter_{}_epoch_{}.pt".format(self.args.model_type, iter, epoch + 1)
                     self.save_model(ckpt_name)
-                train_acc, train_loss, train_time = self.evaluate(mode="train")
+                if self.args.eval_train_set:
+                    train_acc, train_loss, train_time = self.evaluate(mode="train")
+                else:
+                    train_acc, train_loss, train_time = -1, -1, -1
                 valid_acc, valid_loss, valid_time = self.evaluate(mode="valid")
                 result = {
                     "epoch": epoch + 1,
@@ -210,7 +214,7 @@ class Trainer(ABC):
                 # record loss and accs
                 # explictly early stop
                 if valid_acc > best_acc:
-                    ckpt_name = "{}-best.pt".format(self.args.model_type)
+                    ckpt_name = "{}_iter_{}_best.pt".format(self.args.model_type, iter)
                     self.save_model(ckpt_name)
                     best_acc = valid_acc
                     best_count = 0
@@ -241,6 +245,8 @@ class Trainer(ABC):
         self._add_result("final_test", result)
         self.save_result(self.args.output_dir)
         logger.info("Training finished, time: {}".format(time.time() - t_start))
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def evaluate(self, mode="test"):
         assert mode in ["train", "test", "valid"]
@@ -257,7 +263,7 @@ class Trainer(ABC):
             batch_input, y_true = batch_input[:-1], batch_input[-1]
             with torch.no_grad():
                 logits = self.model(*batch_input)
-            y_pred = logits.argmax(dim=-1, keepdim=True)
+            y_pred = logits.argmax(dim=-1).view_as(y_true)
             y_true = y_true.to(self.rank)
             acc = self.metric(y_pred, y_true)
             loss += self.loss_op(logits, y_true.squeeze(-1)).item()

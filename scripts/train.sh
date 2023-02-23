@@ -28,15 +28,16 @@ hidden_dropout_prob=${11}
 header_dropout_prob=${12}
 attention_dropout_prob=${13}
 label_smoothing=${14}
+scheduler_warmup_ratio=${15}
 
-use_adapter=${15}
+use_adapter=${16}
 if $use_adapter; then
     use_adapter='--use_adapter'
 else
     use_adapter=''
 fi
 
-use_SLE=${16}
+use_SLE=${17}
 if $use_SLE; then
     use_SLE='--use_SLE'
 else
@@ -61,4 +62,5 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --header_dropout_prob $header_dropout_prob \
     --attention_dropout_prob $attention_dropout_prob \
     --label_smoothing $label_smoothing \
+    --scheduler_warmup_ratio $scheduler_warmup_ratio \
     $usedapter $use_SLE 2>&1 | tee ${output_dir}/log.txt
