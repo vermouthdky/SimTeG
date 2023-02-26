@@ -4,8 +4,8 @@ suffix='main'
 
 # training parameters
 eval_interval=1
-# lr=2e-5
-lr=1e-4
+lr=2e-5
+# lr=1e-4
 weight_decay=5e-5
 batch_size=10
 eval_batch_size=100
