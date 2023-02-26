@@ -269,6 +269,6 @@ class Trainer(ABC):
             loss += self.loss_op(logits, y_true.squeeze(-1)).item()
             pbar.update(1)
         t_end_eval = time.time()
-        acc = self.metric.compute()
+        acc = self.metric.compute().item()
         loss /= len(eval_loader)
         return acc, loss, t_end_eval - t_start_eval

@@ -2,6 +2,7 @@ import logging
 import os
 
 import torch
+import torch.distributed as dist
 from torch import nn
 from transformers import AutoConfig, DebertaModel, RobertaModel
 from transformers import logging as transformers_logging
@@ -68,17 +69,17 @@ class GBert(nn.Module):
         return bert, header
 
     def forward(self, input_ids, att_mask, x_emb=None, y_emb=None, return_hidden=False):
-        # NOTE: propogated_x = adj_T @ x
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         hidden_features = bert_out[0]
         if x_emb is not None:
             hidden_features[:, 0, :] = self.alpha * x_emb + (1 - self.alpha) * hidden_features[:, 0, :]
         logits = self.header(hidden_features)
+
         if self.use_SLE and y_emb is not None:
-            logits += self.lp_model(y_emb)
+            logits += self.lp_model(y_emb).squeeze(dim=1)
 
         if return_hidden:
-            return logits, hidden_features
+            return logits, hidden_features[:, 0, :]
         else:
             return logits
 

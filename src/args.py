@@ -33,6 +33,7 @@ def parse_args():
     # dataset args
     parser.add_argument("--num_labels", type=int)
     parser.add_argument("--num_feats", type=int)
+    parser.add_argument("--hidden_size", type=int, default=768, help="hidden size of bert-like model")
 
     # flag
     parser.add_argument("--disable_tqdm", action="store_true", default=False)
@@ -42,6 +43,7 @@ def parse_args():
         "--use_SLE", action="store_true", default=False, help="whether to use self-label-enhancement (SLE)"
     )
     parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
+    parser.add_argument("--use_cache", type=bool, default=True)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -108,10 +110,12 @@ def _set_dataset_specific_args(args):
     if args.dataset == "ogbn-arxiv":
         args.num_labels = 40
         args.num_feats = 768 if args.use_bert_x else 128
+        args.hidden_size = 768
 
     elif args.dataset == "ogbn-products":
         args.num_labels = 47
         args.num_feats = 100
+        args.hidden_size = 768
 
     return args
 
