@@ -13,7 +13,7 @@ mkdir -p ${output_dir}
 mkdir -p ${ckpt_dir}
 
 # distributed training envs
-WORLD_SIZE=8
+WORLD_SIZE=4
 MASTER_PORT=32020
 
 # training parameters
@@ -44,6 +44,16 @@ else
     use_SLE=''
 fi
 
+use_bert_x=${18}
+if $use_bert_x; then
+    use_bert_x='--use_bert_x'
+else
+    use_bert_x=''
+fi
+
+lm_type=${19}
+gnn_type=${20}
+
 torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --mode $mode \
     --model_type $model_type \
@@ -63,4 +73,7 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
     --attention_dropout_prob $attention_dropout_prob \
     --label_smoothing $label_smoothing \
     --scheduler_warmup_ratio $scheduler_warmup_ratio \
-    $usedapter $use_SLE 2>&1 | tee ${output_dir}/log.txt
+    $use_adapter $use_SLE $use_bert_x \
+    --lm_type $lm_type \
+    --gnn_type $gnn_type \
+    2>&1 | tee ${output_dir}/log.txt

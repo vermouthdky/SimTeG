@@ -53,6 +53,8 @@ class Deberta(nn.Module):
         config.header_dropout_prob = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
+        config.pos_att_type = None
+        config.relative_attention = False
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = DebertaModel.from_pretrained(pretrained_repo, config=config)
@@ -77,6 +79,8 @@ class AdapterDeberta(nn.Module):
         config.hidden_dropout_prob = args.hidden_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.adapter_hidden_size = args.adapter_hidden_size
+        config.pos_att_type = None
+        config.relative_attention = False
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = AdapterDebertaModel.from_pretrained(pretrained_repo, config=config)

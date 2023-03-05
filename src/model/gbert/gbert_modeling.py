@@ -50,7 +50,7 @@ class GBert(nn.Module):
         )
 
     def _get_bert_model(self, args):
-        pretrained_repo = args.pretrained_model
+        pretrained_repo = args.pretrained_repo
         config = self._get_config(args)
         if pretrained_repo == "microsoft/deberta-base" and args.use_adapter:
             bert = AdapterDebertaModel.from_pretrained(pretrained_repo, config=config)

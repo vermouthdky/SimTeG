@@ -12,15 +12,15 @@ from torch.utils.data.distributed import DistributedSampler
 from torch_geometric.transforms import SIGN
 from tqdm import tqdm
 
-from ...trainer import Trainer
-from ...utils import dataset2foldername, is_dist
+from ..utils import dataset2foldername, is_dist
+from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
 
 class LM_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
-        super(LM_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
+    def __init__(self, args, data, split_idx, evaluator, **kwargs):
+        super(LM_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
 
     def _get_train_loader(self):
         data = self.data

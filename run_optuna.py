@@ -27,12 +27,12 @@ def objective(single_trial):
 
     # setup optuna and search space
     trial = optuna.integration.TorchDistributedTrial(single_trial)
-    args.lr = trial.suggest_float("lr", 1e-6, 1e-4, log=True)
+    args.lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     args.weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
     args.label_smoothing = trial.suggest_float("label_smoothing", 0.1, 0.5)
-    args.hidden_dropout_prob = trial.suggest_float("hidden_dropout_prob", 0.1, 0.5)
+    # args.hidden_dropout_prob = trial.suggest_float("hidden_dropout_prob", 0.1, 0.5)
     # args.adapter_hidden_size = trial.suggest_categorical("adapter_hidden_size", [8, 16, 32, 64, 128])
-    args.attention_dropout_prob = trial.suggest_float("attention_dropout_prob", 0.1, 0.5)
+    # args.attention_dropout_prob = trial.suggest_float("attention_dropout_prob", 0.1, 0.5)
     args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.7)
     args.schedular_warmup_ratio = trial.suggest_categorical("schedular_warmup_ratio", [0.1, 0.3, 0.5])
     args.optuna = True
@@ -131,6 +131,6 @@ def run(n_trials):
 
 
 if __name__ == "__main__":
-    n_trials = 10
+    n_trials = 100
     run(n_trials)
     # load_study()

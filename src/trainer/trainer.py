@@ -18,7 +18,8 @@ from transformers import get_scheduler
 
 import optuna
 
-from .utils import dataset2foldername, is_dist
+from ..model import get_model_class
+from ..utils import dataset2foldername, is_dist
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +29,12 @@ def _mask_to_idx(mask):
 
 
 class Trainer(ABC):
-    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
+    def __init__(self, args, data, split_idx, evaluator, **kwargs):
         self.args = args
         self.data = data
         self.split_idx = split_idx
         self.evaluator = evaluator
-        # NOTE model and metric is also initialized here
-        self.model, self.metric = self._init_model_and_metric(model)
-        self.train_loader = self._get_train_loader()
-        self.eval_loader = {
-            "train": self._get_eval_loader("train"),
-            "valid": self._get_eval_loader("valid"),
-            "test": self._get_eval_loader("test"),
-        }
-        self.optimizer = self._get_optimizer()
         self.loss_op = self._get_loss_op()
-        self.lr_scheduler = self._get_scheduler()
         self.result_dict = {}
         # initialize optuna
         self.trial = kwargs.get("trial", None)
@@ -79,12 +70,12 @@ class Trainer(ABC):
                 name = name[7:]
             if name not in own_state:
                 if strict:
-                    raise KeyError("unexpected key '{}' in state_dict".format(name))
+                    raise KeyError("unexpected key '{}' in model (own_state)".format(name))
                 else:
                     logger.warning("Ignore unexpected key '{}' in state_dict".format(name))
-                    logger.warning(
-                        "Please make sure the model related parameters in 'test.sh' is consistent with the 'train.sh'!"
-                    )
+                    # logger.warning(
+                    #     "Please make sure the model related parameters in 'test.sh' is consistent with the 'train.sh'!"
+                    # )
             else:
                 try:
                     own_state[name].copy_(param)
@@ -92,16 +83,16 @@ class Trainer(ABC):
                     own_state[name].copy_(param.squeeze(0))
 
     def _init_model_and_metric(self, model):
-        if self.args.cont:
-            ckpt_name = os.path.join(self.args.ckpt_dir, self.args.ckpt_name)
-            ckpt = torch.load(ckpt_name, map_location="cpu")
-            self._load_state_dict(model, ckpt, is_dist=False)
-            logging.info("load ckpt:{}".format(ckpt_name))
         metric = Accuracy(task="multiclass", num_classes=self.args.num_labels)
         model.metric = metric
         model.to(self.rank)
         if self.world_size > 1:
-            model = DDP(model, device_ids=[self.rank], output_device=self.rank, find_unused_parameters=True)
+            model = DDP(
+                model,
+                device_ids=[self.rank],
+                output_device=self.rank,
+                # find_unused_parameters=True,
+            )
         return model, metric
 
     @abstractmethod
@@ -166,7 +157,9 @@ class Trainer(ABC):
     def _list_tensor_to_gpu(self, list: List):
         return [input.to(self.rank) if isinstance(input, torch.Tensor) else input for input in list]
 
-    def train_once(self, iter=-1):
+    def train_once(self, iter=0):
+        self.optimizer = self._get_optimizer()
+        self.lr_scheduler = self._get_scheduler()
         best_acc, best_count = 0.0, 0
         for epoch in range(self.args.epochs):
             self.train_loader.sampler.set_epoch(epoch)
@@ -225,6 +218,15 @@ class Trainer(ABC):
         return best_acc  # best valid acc
 
     def train(self):
+        # NOTE model and metric is also initialized here
+        model = get_model_class(self.args.model_type)(self.args)
+        self.model, self.metric = self._init_model_and_metric(model)
+        self.train_loader = self._get_train_loader()
+        self.eval_loader = {
+            "train": self._get_eval_loader("train"),
+            "valid": self._get_eval_loader("valid"),
+            "test": self._get_eval_loader("test"),
+        }
         t_start = time.time()
         best_acc = self.train_once()
         if self.args.optuna and self.trial is not None:
@@ -233,7 +235,7 @@ class Trainer(ABC):
 
         ckpt_path = os.path.join(
             self.args.ckpt_dir,
-            "{}-best.pt".format(self.args.model_type),
+            "{}_iter_{}_best.pt".format(self.args.model_type, 0),
         )
         ckpt = torch.load(ckpt_path, map_location="cpu")
         self._load_state_dict(self.model, ckpt, is_dist=True)
@@ -241,10 +243,10 @@ class Trainer(ABC):
         logger.info("Start testing best model loaded from: {}".format(ckpt_path))
         test_acc, test_loss, test_time = self.evaluate(mode="test")
         result = {"test_loss": test_loss, "test_acc": test_acc, "inference_time_on_test_set": test_time}
-        logger.info("".join("{}:{} ".format(k, v) for k, v in result.items()))
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in result.items()))
         self._add_result("final_test", result)
         self.save_result(self.args.output_dir)
-        logger.info("Training finished, time: {}".format(time.time() - t_start))
+        logger.critical("Training finished, time: {}".format(time.time() - t_start))
         gc.collect()
         torch.cuda.empty_cache()
 

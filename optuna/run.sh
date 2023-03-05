@@ -9,7 +9,7 @@ eval_batch_size=$6
 eval_interval=$7
 
 # set distributed env
-WORLD_SIZE=8
+WORLD_SIZE=4
 MASTER_PORT=32020
 
 project_dir='.'
@@ -24,8 +24,8 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT run_optuna.py \
     --dataset $dataset \
     --suffix $suffix \
     --ckpt_dir $ckpt_dir \
-    --epochs 10 \
-    --batch_size 10 \
-    --eval_batch_size 100 \
-    --eval_interval 1 \
+    --epochs $epochs \
+    --batch_size $batch_size \
+    --eval_batch_size $eval_batch_size \
+    --eval_interval $eval_interval \
     --output_dir $output_dir 2>&1 | tee ${output_dir}/log.txt

@@ -9,10 +9,12 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
+from torch_geometric.transforms import SIGN
 from tqdm import tqdm
 
-from ...trainer import Trainer
-from ...utils import dataset2foldername, is_dist
+from ..model import get_model_class
+from ..utils import dataset2foldername, is_dist
+from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
@@ -63,58 +65,38 @@ class SLE:
         self.y_embs = adj_t @ self.y_embs
 
 
-class GBert_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
-        self.sle = SLE(split_idx["train"], data.y, args.num_labels, args.SLE_threshold, args.use_SLE)
-        self.x_embs = None
+class GBert_v2_Trainer(Trainer):
+    def __init__(self, args, data, split_idx, evaluator, **kwargs):
         self.iter = 0
-        super(GBert_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
-        self.inference_dataloader = self._get_inference_dataloader()
-        self.adj_t = self._init_adj_t(data.adj_t)
-
-    def _init_adj_t(self, adj_t):
-        deg = adj_t.sum(dim=1).to(torch.float)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        return deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
-
-    def _get_dataset(self, mask: torch.Tensor, use_pesudo: bool):
-        if use_pesudo:
-            y = self.sle.pesudo_y[mask].view(-1)
-        else:
-            y = self.data.y[mask].view(-1)
-        input_ids = self.data.input_ids[mask]
-        attention_mask = self.data.attention_mask[mask]
-        y_embs, x_embs = None, None
-        if self.iter > 0:
-            y_embs = self.sle.y_embs[mask] if self.sle.enabled else None
-            x_embs = self.x_embs[mask]
-        tensors = [input_ids, attention_mask, x_embs, y_embs, y]
-        tensors = [t for t in tensors if t is not None]
-        return TensorDataset(*tensors)
+        super(GBert_v2_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
 
     def _get_inference_dataloader(self):
         input_ids = self.data.input_ids
         attention_mask = self.data.attention_mask
-        y_embs, x_embs = None, None
-        if self.iter > 0:
-            y_embs = self.sle.y_embs if self.sle.enabled else None
-            x_embs = self.x_embs
+        x_emb = self.data.x_emb if self.iter > 0 else None
         idx = torch.arange(input_ids.size(0), dtype=torch.long)
-        tensors = [input_ids, attention_mask, x_embs, y_embs, idx]
+        tensors = [input_ids, attention_mask, x_emb, idx]
         tensors = [t for t in tensors if t is not None]
         dataset = TensorDataset(*tensors)
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
+    def _get_dataset(self, mask: torch.Tensor):
+        y = self.data.y[mask].view(-1)
+        input_ids = self.data.input_ids[mask]
+        attention_mask = self.data.attention_mask[mask]
+        x_emb = self.data.x_emb[mask] if self.iter > 0 else None
+        tensors = [input_ids, attention_mask, x_emb, y]
+        tensors = [t for t in tensors if t is not None]
+        return TensorDataset(*tensors)
+
     def _get_train_loader(self):
-        train_mask = self.sle.pesudo_train_mask
-        train_set = self._get_dataset(train_mask, use_pesudo=True)
+        train_set = self._get_dataset(self.split_idx["train"])
         return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
 
     def _get_eval_loader(self, mode="test"):
         assert mode in ["train", "valid", "test"]
         eval_mask = self.split_idx[mode]
-        dataset = self._get_dataset(eval_mask, use_pesudo=False)
+        dataset = self._get_dataset(eval_mask)
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
     def inference_and_evaluate(self, iter):
@@ -193,17 +175,38 @@ class GBert_Trainer(Trainer):
     def train(self):
         for iter in range(self.args.num_iterations):
             logger.warning(f"\n*************** Start iter {iter} training ***************\n")
-
-            ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, iter))
-            if self.args.use_cache and os.path.exists(ckpt_path):
-                logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+            # load the pretrained bert model
+            model = get_model_class("GBert")(self.args, iter)
+            self.model, self.metric = self._init_model_and_metric(model)
+            self.train_loader = self._get_train_loader()
+            self.inference_dataloader = self._get_inference_dataloader()
+            self.eval_loader = {
+                "train": self._get_eval_loader("train"),
+                "valid": self._get_eval_loader("valid"),
+                "test": self._get_eval_loader("test"),
+            }
+            gc.collect()
+            torch.cuda.empty_cache()
+            if self.iter == 0:
+                ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, 0))
+                if self.args.use_cache and os.path.exists(ckpt_path):
+                    logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+                else:
+                    best_valid_acc = self.train_once(iter)
+                    logger.info("Iter {} Best valid acc: {:.4f}".format(iter, best_valid_acc))
             else:
-                best_valid_acc = self.train_once(iter)
-                logger.info("Iter {} Best valid acc: {:.4f}".format(iter, best_valid_acc))
+                ckpt_path = os.path.join(
+                    self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter - 1)
+                )
+                ckpt = torch.load(ckpt_path, map_location="cpu")
+                self._load_state_dict(self.model, ckpt, strict=False, is_dist=True)
+                self.model.to(self.rank)
+                self.train_once(iter)
 
             logger.warning(f"\n*************** Start iter {iter} testing and Postprocessing ***************\n")
             # NOTE init model for the next iteration
             test_t_start = time.time()
+            ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter))
             ckpt = torch.load(ckpt_path, map_location="cpu")
             self._load_state_dict(self.model, ckpt, is_dist=True)
             self.model.to(self.rank)
@@ -215,11 +218,13 @@ class GBert_Trainer(Trainer):
             self.save_result(self.args.output_dir)
 
             self.iter += 1
-            # NOTE SLE
-            if self.sle.enabled:
-                self.sle.update(logits, self.adj_t)
-            self.x_embs = self.adj_t @ hidden_features
+            self.data.x = hidden_features
+            num_layers = self.args.gnn_num_layers
+            self.data = SIGN(num_layers)(self.data)
+            self.data.x_emb = torch.cat([self.data[f"x{i}"] for i in range(1, num_layers + 1)], dim=-1)
+            del self.data.x
+            for i in range(1, num_layers + 1):
+                del self.data[f"x{i}"]
             del hidden_features, logits
-            self.train_loader = self._get_train_loader()
             gc.collect()
             torch.cuda.empty_cache()
