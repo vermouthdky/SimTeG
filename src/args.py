@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
     parser.add_argument("--save_ckpt_per_valid", type=bool, default=False)
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
-    parser.add_argument("--pretrained_model", type=str, help="has to be consistent with repo_id in huggingface")
+    parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--eval_interval", type=int, default=5)
     parser.add_argument("--eval_train_set", type=bool, default=False)
 
@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.1, help="consistent with the one in bert")
     parser.add_argument("--header_dropout_prob", type=float, default=0.2)
     parser.add_argument("--attention_dropout_prob", type=float, default=0.1)
-    parser.add_argument("--adapter_hidden_size", type=int, default=64)
+    parser.add_argument("--adapter_hidden_size", type=int, default=768)
     parser.add_argument("--label_smoothing", type=float, default=0.3)
     parser.add_argument("--scheduler_warmup_ratio", type=float, default=0.6)
     parser.add_argument("--scheduler_type", type=str, default="linear")
@@ -65,9 +65,10 @@ def parse_args():
     parser.add_argument("--mlp_dim_hidden", type=int, default=128)
     parser.add_argument("--SLE_threshold", type=float, default=0.9)
 
-    # gnn hyperparameters
-    parser.add_argument("--gnn_num_layers", type=int, default=2)
-    parser.add_argument("--gnn_type", type=str, default="SIGN")
+    # module hyperparameters
+    parser.add_argument("--lm_type", type=str, default="Deberta")
+    parser.add_argument("--gnn_num_layers", type=int, default=4)
+    parser.add_argument("--gnn_type", type=str, default="GAMLP")
     parser.add_argument("--gnn_dropout", type=float, default=0.2)
     parser.add_argument("--gnn_dim_hidden", type=int, default=256)
 
@@ -92,6 +93,15 @@ def load_args(dir):
 def _post_init(args):
     args = _set_dataset_specific_args(args)
     args = _set_pretrained_repo(args)
+    args = _set_lm_and_gnn_type(args)
+    return args
+
+
+def _set_lm_and_gnn_type(args):
+    if args.model_type in ["Deberta", "Roberta"]:
+        args.lm_type = args.model_type
+    elif args.model_type in ["GAMLP", "SAGN", "SIGN"]:
+        args.gnn_type = args.model_type
     return args
 
 
@@ -101,8 +111,11 @@ def _set_pretrained_repo(args):
         "Roberta": "roberta-base",
         "GBert": "microsoft/deberta-base",
     }
-    assert args.model_type in dict.keys()
-    args.pretrained_model = dict[args.model_type]
+
+    if args.model_type in dict.keys():
+        args.pretrained_repo = dict[args.model_type]
+    else:  # does not take effect
+        args.pretrained_repo = "microsoft/deberta-base"
     return args
 
 
@@ -110,6 +123,8 @@ def _set_dataset_specific_args(args):
     if args.dataset == "ogbn-arxiv":
         args.num_labels = 40
         args.num_feats = 768 if args.use_bert_x else 128
+        if args.model_type == "GBert":
+            args.num_feats = 768
         args.hidden_size = 768
 
     elif args.dataset == "ogbn-products":

@@ -1,7 +1,7 @@
 {
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true,
-    "sync-rsync.remote": "sea2:/home/aiops/duanky/gbert/",
+    "sync-rsync.remote": "sea:/home/aiops/duanky/gbert/",
     "sync-rsync.onSave": true,
     "sync-rsync.onSaveIndividual": true,
     "sync-rsync.shell": "",

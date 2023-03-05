@@ -11,16 +11,16 @@ from tqdm import tqdm
 
 import optuna
 
-from ...trainer import Trainer
-from ...utils import dataset2foldername, is_dist
+from ..utils import dataset2foldername, is_dist
+from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
 
 class GNN_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
+    def __init__(self, args, data, split_idx, evaluator, **kwargs):
         data = self._precompute(data, args.gnn_num_layers)
-        super(GNN_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
+        super(GNN_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
 
     def _precompute(self, data, num_layers):
         logger.info("Precomputing data: {}".format(data))
