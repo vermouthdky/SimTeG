@@ -11,7 +11,7 @@ from optuna.trial import TrialState
 import optuna
 from main import set_env
 from src.args import parse_args, save_args
-from src.run import cleanup, get_trainer_class, load_data, load_model, set_single_env
+from src.run import cleanup, get_trainer_class, load_data, set_single_env
 from src.utils import set_logging
 
 logger = logging.getLogger(__name__)
@@ -27,30 +27,31 @@ def objective(single_trial):
 
     # setup optuna and search space
     trial = optuna.integration.TorchDistributedTrial(single_trial)
-    args.lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+    args.epochs = trial.suggest_int("epochs", 5, 10)
+    args.lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
     args.weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
     args.label_smoothing = trial.suggest_float("label_smoothing", 0.1, 0.5)
-    # args.hidden_dropout_prob = trial.suggest_float("hidden_dropout_prob", 0.1, 0.5)
-    # args.adapter_hidden_size = trial.suggest_categorical("adapter_hidden_size", [8, 16, 32, 64, 128])
-    # args.attention_dropout_prob = trial.suggest_float("attention_dropout_prob", 0.1, 0.5)
+    args.hidden_dropout_prob = trial.suggest_float("hidden_dropout_prob", 0.1, 0.7)
+    if args.use_adapter:
+        args.adapter_hidden_size = trial.suggest_categorical("adapter_hidden_size", [32, 128, 512, 768])
+    args.attention_dropout_prob = trial.suggest_float("attention_dropout_prob", 0.1, 0.7)
     args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.7)
-    args.schedular_warmup_ratio = trial.suggest_categorical("schedular_warmup_ratio", [0.1, 0.3, 0.5])
+    args.schedular_warmup_ratio = trial.suggest_categorical("schedular_warmup_ratio", [0.1, 0.3, 0.5, 0.7])
     args.optuna = True
     logger.info(args)
 
-    # if rank not in [-1, 0]:
-    #     # Make sure only the first process in distributed training will download model & vocab
-    #     torch.distributed.barrier()
+    if rank not in [-1, 0]:
+        # Make sure only the first process in distributed training will download model & vocab
+        torch.distributed.barrier()
     # setup dataset: [ogbn-arxiv]
     data, split_idx, evaluator, processed_dir = load_data(args)
-    model = load_model(args)
-    # if rank == 0:
-    #     torch.distributed.barrier()
+    if rank == 0:
+        torch.distributed.barrier()
     # trainer
     Trainer = get_trainer_class(args.model_type)
-    trainer = Trainer(args, model, data, split_idx, evaluator, trial=trial)
+    trainer = Trainer(args, data, split_idx, evaluator, trial=trial)
     best_acc = trainer.train()
-    del trainer, model, data, split_idx, evaluator
+    del trainer, data, split_idx, evaluator
     torch.cuda.empty_cache()
     gc.collect()
     return best_acc
@@ -131,6 +132,6 @@ def run(n_trials):
 
 
 if __name__ == "__main__":
-    n_trials = 100
+    n_trials = 40
     run(n_trials)
     # load_study()

@@ -91,7 +91,7 @@ class Trainer(ABC):
                 model,
                 device_ids=[self.rank],
                 output_device=self.rank,
-                # find_unused_parameters=True,
+                find_unused_parameters=True,
             )
         return model, metric
 
@@ -173,9 +173,9 @@ class Trainer(ABC):
                 batch_loss = self.training_step(*batch_input, **kwargs)
                 loss += batch_loss
                 dist.barrier()
-            t_end_epoch = time.time()
-            train_time_per_epoch = t_end_epoch - t_start_epoch
-            loss /= len(self.train_loader)
+                t_end_epoch = time.time()
+                train_time_per_epoch = t_end_epoch - t_start_epoch
+                loss /= len(self.train_loader)
             # evalutation and early stop
             if (epoch + 1) % self.args.eval_interval == 0:
                 if self.args.save_ckpt_per_valid:
@@ -214,12 +214,12 @@ class Trainer(ABC):
                 else:
                     best_count += 1
                     if best_count >= 2:
-                        break
+                        return best_acc
         return best_acc  # best valid acc
 
     def train(self):
         # NOTE model and metric is also initialized here
-        model = get_model_class(self.args.model_type)(self.args)
+        model = get_model_class(self.args.model_type, use_adapter=self.args.use_adapter)(self.args)
         self.model, self.metric = self._init_model_and_metric(model)
         self.train_loader = self._get_train_loader()
         self.eval_loader = {

@@ -28,9 +28,10 @@ def parse_args():
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
     parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--eval_interval", type=int, default=5)
+    parser.add_argument("--num_instances_per_interval", type=int, default=50000)
     parser.add_argument("--eval_train_set", type=bool, default=False)
 
-    # dataset args
+    # dataset and fixed model args
     parser.add_argument("--num_labels", type=int)
     parser.add_argument("--num_feats", type=int)
     parser.add_argument("--hidden_size", type=int, default=768, help="hidden size of bert-like model")
@@ -51,7 +52,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=5)
     parser.add_argument("--eval_batch_size", type=int, default=10)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--accum_interval", type=int, default=5)
+    parser.add_argument("--accum_interval", type=int, default=1)
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.1, help="consistent with the one in bert")
     parser.add_argument("--header_dropout_prob", type=float, default=0.2)
     parser.add_argument("--attention_dropout_prob", type=float, default=0.1)

@@ -1,6 +1,6 @@
 model_type='Deberta'
 dataset='ogbn-arxiv'
-suffix='main'
+suffix='adapter'
 
 # fixed training parameters
 batch_size=20
@@ -26,4 +26,5 @@ torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT run_optuna.py \
     --batch_size $batch_size \
     --eval_batch_size $eval_batch_size \
     --eval_interval $eval_interval \
+    --use_adapter \
     --output_dir $output_dir 2>&1 | tee ${output_dir}/log.txt

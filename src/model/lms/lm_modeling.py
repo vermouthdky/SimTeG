@@ -1,16 +1,10 @@
+import logging
 import os
 
 import torch
 from torch import nn
-from transformers import (  # AutoConfig,; AutoModel,
-    DebertaConfig,
-    DebertaModel,
-    DebertaV2Config,
-    DebertaV2Model,
-    RobertaConfig,
-    RobertaModel,
-    logging,
-)
+from transformers import DebertaConfig, DebertaModel, RobertaConfig, RobertaModel
+from transformers import logging as transformers_logging  # AutoConfig,; AutoModel,
 
 from .modules import (
     AdapterDebertaModel,
@@ -19,7 +13,9 @@ from .modules import (
     RobertaClassificationHead,
 )
 
-logging.set_verbosity_error()
+logger = logging.getLogger(__name__)
+
+transformers_logging.set_verbosity_error()
 
 
 class Roberta(nn.Module):
@@ -53,8 +49,6 @@ class Deberta(nn.Module):
         config.header_dropout_prob = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
-        config.pos_att_type = None
-        config.relative_attention = False
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = DebertaModel.from_pretrained(pretrained_repo, config=config)
@@ -73,18 +67,29 @@ class AdapterDeberta(nn.Module):
     def __init__(self, args):
         super(AdapterDeberta, self).__init__()
         pretrained_repo = "microsoft/deberta-base"
-        config = DebertaModel.from_pretrained(pretrained_repo)
+        config = DebertaConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.adapter_hidden_size = args.adapter_hidden_size
-        config.pos_att_type = None
-        config.relative_attention = False
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = AdapterDebertaModel.from_pretrained(pretrained_repo, config=config)
         self.head = DebertaClassificationHead(config)
+        is_correct = self._check_if_adapter_is_correct()
+        if not is_correct:
+            raise ValueError("Adapter is not correctly initialized!")
+        else:
+            logger.critical("Adapter is correctly initialized!")
+
+    def _check_if_adapter_is_correct(self):
+        for name, param in self.bert_model.named_parameters():
+            if param.requires_grad and "adapter" not in name:
+                return False
+            elif not param.requires_grad and "adapter" in name:
+                return False
+        return True
 
     def forward(self, input_ids, att_mask, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
