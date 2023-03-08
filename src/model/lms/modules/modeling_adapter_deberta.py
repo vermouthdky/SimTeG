@@ -1088,7 +1088,7 @@ class DebertaForMaskedLM(DebertaPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
-        self.deberta = DebertaModel(config)
+        self.deberta = AdapterDebertaModel(config)
         self.cls = DebertaOnlyMLMHead(config)
 
         # Initialize weights and apply final processing
