@@ -1,12 +1,6 @@
-model_type=$1
-dataset=$2
-suffix=$3
-
-# fixed training parameters
-epochs=$4
-batch_size=$5
-eval_batch_size=$6
-eval_interval=$7
+model_type=$2
+dataset=$4
+suffix=$6
 
 # set distributed env
 WORLD_SIZE=4
@@ -20,12 +14,5 @@ mkdir -p ${output_dir}
 mkdir -p ${ckpt_dir}
 
 torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT run_optuna.py \
-    --model_type $model_type \
-    --dataset $dataset \
-    --suffix $suffix \
-    --ckpt_dir $ckpt_dir \
-    --epochs $epochs \
-    --batch_size $batch_size \
-    --eval_batch_size $eval_batch_size \
-    --eval_interval $eval_interval \
-    --output_dir $output_dir 2>&1 | tee ${output_dir}/log.txt
+    --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
+    $@ 2>&1 | tee ${output_dir}/log.txt
