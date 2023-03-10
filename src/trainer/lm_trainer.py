@@ -37,6 +37,66 @@ class LM_Trainer(Trainer):
         dataset = TensorDataset(data.input_ids[eval_mask], data.attention_mask[eval_mask], data.y[eval_mask])
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
+    def train_once(self, iter=0):
+        self.optimizer = self._get_optimizer()
+        self.lr_scheduler = self._get_scheduler()
+        best_acc, best_count = 0.0, 0
+        for epoch in range(self.args.epochs):
+            self.train_loader.sampler.set_epoch(epoch)
+            loss = 0.0
+            t_start_epoch = time.time()
+            for step, batch_input in enumerate(
+                tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=self.disable_tqdm)
+            ):
+                batch_input = self._list_tensor_to_gpu(batch_input)
+                kwargs = {"step": step, "accum_interval": self.args.accum_interval, "len_batch": len(self.train_loader)}
+                batch_loss = self.training_step(*batch_input, **kwargs)
+                loss += batch_loss
+                dist.barrier()
+                t_end_epoch = time.time()
+                train_time_per_epoch = t_end_epoch - t_start_epoch
+                loss /= len(self.train_loader)
+            # evalutation and early stop
+            if (epoch + 1) % self.args.eval_interval == 0:
+                if self.args.save_ckpt_per_valid:
+                    ckpt_name = "{}_iter_{}_epoch_{}.pt".format(self.args.model_type, iter, epoch + 1)
+                    self.save_model(ckpt_name)
+                if self.args.eval_train_set:
+                    train_acc, train_loss, train_time = self.evaluate(mode="train")
+                else:
+                    train_acc, train_loss, train_time = -1, -1, -1
+                valid_acc, valid_loss, valid_time = self.evaluate(mode="valid")
+                result = {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "train_acc": train_acc,
+                    "valid_loss": valid_loss,
+                    "valid_acc": valid_acc,
+                    "train_time_per_epoch": train_time_per_epoch,
+                    "inference_time_on_train_set": train_time,
+                    "inference_time_on_valid_set": valid_time,
+                }
+                logger.warning("".join("{}:{:.4f} ".format(k, v) for k, v in result.items()))
+                self._add_result(f"iter_{iter}_epoch_{epoch+1}", result)
+                if self.args.optuna and self.trial is not None:
+                    self.trial.report(valid_acc, epoch + 1)
+                    # if not iterative pruning, prune it if necessary
+                    # else we do pruning in the outer loop
+                    if iter == -1 and self.trial.should_prune():
+                        raise optuna.exceptions.TrialPruned()
+                # record loss and accs
+                # explictly early stop
+                if valid_acc > best_acc:
+                    ckpt_name = "{}_iter_{}_best.pt".format(self.args.model_type, iter)
+                    self.save_model(ckpt_name)
+                    best_acc = valid_acc
+                    best_count = 0
+                else:
+                    best_count += 1
+                    if best_count >= 2:
+                        return best_acc
+        return best_acc  # best valid acc
+
     def save_bert_x(self, data):
         """
         save bert features to disk, used after training
@@ -57,3 +117,4 @@ class LM_Trainer(Trainer):
         del dataloader, bert_x, bert_x_list
         gc.collect()
         logger.info("save bert features {} to: {}".format(bert_x.shape, saved_dir))
+

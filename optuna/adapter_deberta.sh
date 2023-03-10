@@ -1,6 +1,6 @@
-model_type='deberta'
+model_type='Deberta'
 dataset='ogbn-arxiv'
-suffix='optuna_adapter'
+suffix='adapter'
 
 bash optuna/run.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --epochs 10 \

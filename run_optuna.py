@@ -60,11 +60,9 @@ def objective(single_trial):
 def load_study():
     set_logging()
     args = parse_args()
-    study = optuna.create_study(
-        direction="maximize",
+    study = optuna.load_study(
         storage="sqlite:///optuna_gbert.db",
         study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
-        load_if_exists=True,
     )
 
     assert study is not None
@@ -133,5 +131,5 @@ def run(n_trials):
 
 if __name__ == "__main__":
     n_trials = 40
-    run(n_trials)
-    # load_study()
+    # run(n_trials)
+    load_study()

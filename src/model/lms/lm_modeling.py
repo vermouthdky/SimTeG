@@ -3,13 +3,14 @@ import os
 
 import torch
 from torch import nn
-from transformers import DebertaConfig, DebertaModel, RobertaConfig, RobertaModel
+from transformers import DebertaConfig, RobertaConfig, RobertaModel
 from transformers import logging as transformers_logging  # AutoConfig,; AutoModel,
 
 from .modules import (
     AdapterDebertaModel,
     AdapterRobertaModel,
     DebertaClassificationHead,
+    DebertaModel,
     RobertaClassificationHead,
 )
 

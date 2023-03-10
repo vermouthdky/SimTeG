@@ -25,7 +25,7 @@ class GBert_v2(nn.Module):
         self.iter = iter
         self.hidden_size = args.hidden_size
         if self.iter == 0:
-            self.bert_model, self.header = self._get_bert_model(args, head=True)
+            self.bert_model, self.head = self._get_bert_model(args, head=True)
         else:
             self.bert_model = self._get_bert_model(args, head=False)
             self.gnn_model = self._get_gnn_model(args)
@@ -81,7 +81,7 @@ class GBert_v2(nn.Module):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         hidden_features = bert_out[0]
         if self.iter == 0:
-            logits = self.header(hidden_features)
+            logits = self.head(hidden_features)
         else:
             assert x_emb is not None
             bert_out = hidden_features[:, 0, :]

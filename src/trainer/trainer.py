@@ -91,7 +91,7 @@ class Trainer(ABC):
                 model,
                 device_ids=[self.rank],
                 output_device=self.rank,
-                find_unused_parameters=True,
+                # find_unused_parameters=True,
             )
         return model, metric
 
@@ -241,8 +241,13 @@ class Trainer(ABC):
         self._load_state_dict(self.model, ckpt, is_dist=True)
         self.model.to(self.rank)
         logger.info("Start testing best model loaded from: {}".format(ckpt_path))
-        test_acc, test_loss, test_time = self.evaluate(mode="test")
-        result = {"test_loss": test_loss, "test_acc": test_acc, "inference_time_on_test_set": test_time}
+        result = {}
+        for mode in ["train", "valid", "test"]:
+            eval_acc, eval_loss, eval_time = self.evaluate(mode=mode)
+            result["{}_acc".format(mode)] = eval_acc
+            result["{}_loss".format(mode)] = eval_loss
+            result["{}_time".format(mode)] = eval_time
+
         logger.critical("".join("{}:{} ".format(k, v) for k, v in result.items()))
         self._add_result("final_test", result)
         self.save_result(self.args.output_dir)

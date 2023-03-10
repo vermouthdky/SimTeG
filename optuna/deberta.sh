@@ -1,9 +1,8 @@
-model_type='deberta'
+model_type='Deberta'
 dataset='ogbn-arxiv'
-suffix='optuna_main'
+suffix='main'
 
 bash optuna/run.sh --model_type $model_type --dataset $dataset --suffix $suffix \
-    --epochs $epochs \
     --batch_size 20 \
     --eval_batch_size 200 \
     --eval_interval 1
