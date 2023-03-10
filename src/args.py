@@ -24,7 +24,6 @@ def parse_args():
     parser.add_argument("--output_dir", type=str)  # output dir
     parser.add_argument("--ckpt_dir", type=str)  # ckpt path to save
     parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
-    parser.add_argument("--save_ckpt_per_valid", type=bool, default=False)
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
     parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--eval_interval", type=int, default=5)
@@ -45,6 +44,7 @@ def parse_args():
     )
     parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
     parser.add_argument("--use_cache", type=bool, default=True)
+    parser.add_argument("--save_ckpt_per_valid", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -72,6 +72,7 @@ def parse_args():
     parser.add_argument("--gnn_type", type=str, default="GAMLP")
     parser.add_argument("--gnn_dropout", type=float, default=0.2)
     parser.add_argument("--gnn_dim_hidden", type=int, default=256)
+    # parser.add_argument("--gnn_lr", type=float)
 
     args = parser.parse_args()
     args = _post_init(args)

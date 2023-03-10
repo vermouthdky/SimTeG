@@ -89,6 +89,19 @@ class GBert_v2_Trainer(Trainer):
         tensors = [t for t in tensors if t is not None]
         return TensorDataset(*tensors)
 
+    # def _get_optimizer(self):
+    #     if self.iter == 0:
+    #         super()._get_optimizer()
+    #     else:
+    #         bert_params = list(self.model.bert_model.parameters())
+    #         gnn_params = list(self.model.gnn_model.parameters())
+    #         return torch.optim.AdamW(
+    #             [
+    #                 {"params": bert_params, "lr": self.args.lr, "weight_decay": self.args.weight_decay},
+    #                 {"params": gnn_params, "lr": self.args.gnn_lr, "weight_decay": self.args.weight_decay},
+    #             ],
+    #         )
+
     def _get_train_loader(self):
         train_set = self._get_dataset(self.split_idx["train"])
         return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
