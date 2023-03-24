@@ -1,4 +1,4 @@
-from .gbert_v2.gbert_v2_modeling import GBert_v2
+from .gbert.gbert_v2_modeling import GBert_v2
 from .gnns.gnn_modeling import GAMLP, SAGN, SIGN
 from .lms.lm_modeling import AdapterDeberta, AdapterRoberta, Deberta, Roberta
 
