@@ -18,59 +18,11 @@ from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
-# run optuna on gbert_v2
 
-
-class SLE:
-    def __init__(self, train_idx, y_true, num_labels, SLE_threshold, use_SLE=True):
-        """
-        ground_truth: train_idx, y_true
-        pesudos: pesudo_train_mask, pesudo_y
-        for propogation: y_embs
-        """
-        self.enabled = use_SLE
-        self.threshold = SLE_threshold
-        # save ground truth
-        self.y_true = y_true.view(-1)
-        self.train_mask = torch.zeros_like(self.y_true, dtype=torch.bool)
-        self.train_mask[train_idx] = True
-        # set pesudo train mask
-        self.pesudo_train_mask = self.train_mask.clone()
-        # for self training
-        self.pesudo_y = torch.zeros_like(self.y_true)
-        self.pesudo_y[train_idx] = self.y_true[train_idx]
-        # for x (feature) and y (label) propogation
-        self.y_embs = None
-        if use_SLE:
-            self.y_embs = torch.zeros(self.y_true.size(0), num_labels)
-            self.y_embs[self.train_mask] = F.one_hot(
-                self.y_true[self.train_mask],
-                num_classes=num_labels,
-            ).float()
-        logger.info("Initialized pseudo labels, rate: {:.4f}".format(self.pesudo_label_rate))
-
-    @property
-    def pesudo_label_rate(self):
-        return self.pesudo_train_mask.sum() / self.pesudo_train_mask.shape[0]
-
-    def update(self, logits, adj_t):
-        if not self.enabled:
-            return
-        # self training
-        val, pred = torch.max(F.softmax(logits, dim=1), dim=1)
-        SLE_mask = val > self.threshold
-        SLE_pred = pred[SLE_mask]
-        self.pesudo_train_mask = SLE_mask | self.pesudo_train_mask
-        self.pesudo_y[SLE_mask] = SLE_pred
-        self.pesudo_y[self.train_mask] = self.y_true[self.train_mask]
-        # label propogation
-        self.y_embs = adj_t @ self.y_embs
-
-
-class GBert_v2_Trainer(Trainer):
+class GBert_v3_Trainer(Trainer):
     def __init__(self, args, data, split_idx, evaluator, **kwargs):
         self.iter = 0
-        super(GBert_v2_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
+        super(GBert_v3_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
 
     def _get_inference_dataloader(self):
         input_ids = self.data.input_ids
@@ -87,35 +39,9 @@ class GBert_v2_Trainer(Trainer):
         input_ids = self.data.input_ids[mask]
         attention_mask = self.data.attention_mask[mask]
         x_emb = self.data.x_emb[mask] if self.iter > 0 else None
-        x0 = self.data.x[mask] if self.iter > 0 else None
-        tensors = [input_ids, attention_mask, x_emb, x0, y]
+        tensors = [input_ids, attention_mask, x_emb, y]
         tensors = [t for t in tensors if t is not None]
         return TensorDataset(*tensors)
-
-    def _get_optimizer(self):
-        if self.iter == 0:
-            # return torch.optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
-            bert_params = list(self.model.module.bert_model.parameters())
-            head_params = list(self.model.module.head.parameters())
-        else:
-            bert_params = list(self.model.module.bert_model.parameters())
-            head_params = list(self.model.module.gnn_model.parameters())
-        return torch.optim.AdamW(
-            [
-                {"params": bert_params, "lr": self.args.lr, "weight_decay": self.args.weight_decay},
-                {"params": head_params, "lr": self.args.gnn_lr, "weight_decay": self.args.weight_decay},
-            ],
-        )
-
-    def save_model(self, ckpt_name):
-        if self.rank in [0, -1]:
-            ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
-            # torch.save(self.model.module.bert_model.state_dict(), ckpt_path)
-            # logger.info("Saved the submodule 'bert_model' to {}".format(ckpt_path))
-            torch.save(self.model.state_dict(), ckpt_path)
-            logger.info("Saved the model to {}".format(ckpt_path))
-        if is_dist():
-            dist.barrier()
 
     def _get_train_loader(self):
         train_set = self._get_dataset(self.split_idx["train"])
@@ -200,37 +126,10 @@ class GBert_v2_Trainer(Trainer):
     def inference_step(self, *inputs):
         return self.model(*inputs, return_hidden=True)
 
-    def training_step(self, *inputs, **kwargs):
-        self.model.train()
-        inputs, y = inputs[:-1], inputs[-1]
-        if self.iter > 0:
-            inputs, x0 = inputs[:-1], inputs[-1]
-
-        logits, hidden_out = self.model(*inputs, return_hidden=True)
-        loss = self.loss_op(logits, y.to(self.rank))
-        if self.iter > 0:
-            kl_loss = F.kl_div(
-                input=F.log_softmax(hidden_out, dim=-1),
-                target=F.softmax(x0, dim=-1),
-                reduction="batchmean",
-            )
-            kl_loss *= 2**self.args.kl_loss_temp
-            loss += self.args.kl_loss_weight * kl_loss
-        loss.backward()
-        step = kwargs.get("step", 1)
-        accum_interval = kwargs.get("accum_interval", 1)
-        batch_len = kwargs.get("batch_len", 1)
-        if ((step + 1) % accum_interval == 0) or ((step + 1) == batch_len):
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-        if self.lr_scheduler is not None:
-            self.lr_scheduler.step()
-        return loss.item()
-
     def train(self):
-        best_valid_acc = 0.0
-        best_count = 0
-        for iter in range(self.args.num_iterations):
+        logger.critical(f"Start training GBert_v3!")
+        self.iter = 0
+        for iter in range(self.args.num_iterations + 1):
             logger.warning(f"\n*************** Start iter {iter} training ***************\n")
             # load the pretrained bert model
             model = get_model_class("GBert")(self.args, iter)
@@ -244,61 +143,38 @@ class GBert_v2_Trainer(Trainer):
             }
             gc.collect()
             torch.cuda.empty_cache()
-            if self.iter == 0:
-                ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, 0))
-                if self.args.use_cache and os.path.exists(ckpt_path):
-                    logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
-                else:
-                    valid_acc = self.train_once(iter)
-                    logger.info("Iter {} Best valid acc: {:.4f}".format(iter, best_valid_acc))
-            else:
-                if self.args.inherit:
-                    logger.critical("using inherited weights from the last iteration!")
-                    ckpt_path = os.path.join(
-                        self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter - 1)
-                    )
-                    ckpt = torch.load(ckpt_path, map_location="cpu")
-                    self._load_state_dict(self.model, ckpt, strict=False, is_dist=True)
-                else:
-                    logger.critical("train the model from scratch instead of inheriting!")
+            if self.iter > 0:
+                ckpt_path = os.path.join(
+                    self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter - 1)
+                )
+                ckpt = torch.load(ckpt_path, map_location="cpu")
+                self._load_state_dict(self.model, ckpt, strict=False, is_dist=True)
                 self.model.to(self.rank)
-                valid_acc = self.train_once(iter)
+                self.train_once(iter)
 
             logger.warning(f"\n*************** Start iter {iter} testing and Postprocessing ***************\n")
-            # NOTE init model for the next iteration
-            test_t_start = time.time()
-            ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter))
-            ckpt = torch.load(ckpt_path, map_location="cpu")
-            # self._load_state_dict(self.model.module.bert_model, ckpt, is_dist=True)
-            self._load_state_dict(self.model, ckpt, strict=False, is_dist=True)
-            self.model.to(self.rank)
-            logger.info("initialize iter {} model with ckpt loaded from: {}".format(iter, ckpt_path))
+            if self.iter > 0:
+                # NOTE init model for the next iteration
+                test_t_start = time.time()
+                ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter))
+                ckpt = torch.load(ckpt_path, map_location="cpu")
+                self._load_state_dict(self.model, ckpt, is_dist=True)
+                self.model.to(self.rank)
+                logger.info("initialize iter {} model with ckpt loaded from: {}".format(iter, ckpt_path))
             # NOTE inference for SLE and propogation
             hidden_features, logits, results = self.inference_and_evaluate(iter)
             logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
             self._add_result(f"iter_{iter}_final_test", results)
             self.save_result(self.args.output_dir)
 
-            valid_acc = results["valid_acc"]
-            if valid_acc > best_valid_acc:
-                ckpt_name = "{}_best.pt".format(self.args.model_type)
-                self.save_model(ckpt_name)
-                best_valid_acc = valid_acc
-                best_count = 0
-            else:
-                best_count += 1
-                if best_count >= 2:
-                    return best_valid_acc
-
             self.iter += 1
-            # preserve data.x for KL divergence loss
             self.data.x = hidden_features
             num_layers = self.args.gnn_num_layers
             self.data = SIGN(num_layers)(self.data)
             self.data.x_emb = torch.cat([self.data[f"x{i}"] for i in range(1, num_layers + 1)], dim=-1)
+            del self.data.x
             for i in range(1, num_layers + 1):
                 del self.data[f"x{i}"]
             del hidden_features, logits
             gc.collect()
             torch.cuda.empty_cache()
-        return best_valid_acc

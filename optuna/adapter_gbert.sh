@@ -4,7 +4,7 @@ lm_type='Deberta'
 gnn_type='GAMLP'
 suffix=optuna_${lm_type}_${gnn_type}_adapter_inherit_kl
 
-bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
+bash optuna/run.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --eval_interval 1 \
     --save_ckpt_per_valid \
     --num_iterations 8 \
@@ -16,5 +16,4 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --hidden_dropout_prob 0.16 \
     --label_smoothing 0.28 \
     --use_adapter \
-    --inherit \
-    --use_cache
+    --inherit

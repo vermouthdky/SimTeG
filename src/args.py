@@ -28,7 +28,6 @@ def parse_args():
     parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--eval_interval", type=int, default=5)
     parser.add_argument("--num_instances_per_interval", type=int, default=50000)
-    parser.add_argument("--eval_train_set", type=bool, default=False)
 
     # dataset and fixed model args
     parser.add_argument("--num_labels", type=int)
@@ -43,8 +42,10 @@ def parse_args():
         "--use_SLE", action="store_true", default=False, help="whether to use self-label-enhancement (SLE)"
     )
     parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
-    parser.add_argument("--use_cache", type=bool, default=True)
+    parser.add_argument("--use_cache", action="store_true", default=False)
     parser.add_argument("--save_ckpt_per_valid", action="store_true", default=False)
+    parser.add_argument("--eval_train_set", action="store_true", default=False)
+    parser.add_argument("--inherit", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -62,6 +63,9 @@ def parse_args():
     parser.add_argument("--scheduler_type", type=str, default="linear")
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
+    # parameters for kl loss
+    parser.add_argument("--kl_loss_weight", type=float, default=1)
+    parser.add_argument("--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp")
     # training hyperparameters for SLE
     parser.add_argument("--mlp_dim_hidden", type=int, default=128)
     parser.add_argument("--SLE_threshold", type=float, default=0.9)
@@ -72,7 +76,11 @@ def parse_args():
     parser.add_argument("--gnn_type", type=str, default="GAMLP")
     parser.add_argument("--gnn_dropout", type=float, default=0.2)
     parser.add_argument("--gnn_dim_hidden", type=int, default=256)
-    # parser.add_argument("--gnn_lr", type=float)
+    parser.add_argument("--gnn_lr", type=float, default=5e-4, help="only used for gbert")
+    parser.add_argument("--gnn_weight_decay", type=float, default=1e-5, help="only used for gbert")
+
+    # optuna hyperparameters
+    parser.add_argument("--expected_valid_acc", type=float, default=0.6)
 
     args = parser.parse_args()
     args = _post_init(args)
@@ -128,6 +136,7 @@ def _set_dataset_specific_args(args):
         if args.model_type == "GBert":
             args.num_feats = 768
         args.hidden_size = 768
+        args.expected_valid_acc = 0.6
 
     elif args.dataset == "ogbn-products":
         args.num_labels = 47

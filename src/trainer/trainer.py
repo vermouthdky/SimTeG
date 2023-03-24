@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from torchmetrics import Accuracy
 from tqdm import tqdm
-from transformers import get_scheduler
+from transformers import Trainer, TrainingArguments, get_scheduler
 
 import optuna
 
@@ -86,12 +86,15 @@ class Trainer(ABC):
         metric = Accuracy(task="multiclass", num_classes=self.args.num_labels)
         model.metric = metric
         model.to(self.rank)
+        find_unused_parameters = False
+        if not self.args.use_adapter and self.args.model_type in ["GBert", "Deberta"]:
+            find_unused_parameters = True
         if self.world_size > 1:
             model = DDP(
                 model,
                 device_ids=[self.rank],
                 output_device=self.rank,
-                # find_unused_parameters=True,
+                find_unused_parameters=find_unused_parameters,
             )
         return model, metric
 
@@ -169,7 +172,7 @@ class Trainer(ABC):
                 tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=self.disable_tqdm)
             ):
                 batch_input = self._list_tensor_to_gpu(batch_input)
-                kwargs = {"step": step, "accum_interval": self.args.accum_interval, "len_batch": len(self.train_loader)}
+                kwargs = {"step": step, "accum_interval": self.args.accum_interval, "batch_len": len(self.train_loader)}
                 batch_loss = self.training_step(*batch_input, **kwargs)
                 loss += batch_loss
                 dist.barrier()
@@ -200,9 +203,7 @@ class Trainer(ABC):
                 self._add_result(f"iter_{iter}_epoch_{epoch+1}", result)
                 if self.args.optuna and self.trial is not None:
                     self.trial.report(valid_acc, epoch + 1)
-                    # if not iterative pruning, prune it if necessary
-                    # else we do pruning in the outer loop
-                    if iter == -1 and self.trial.should_prune():
+                    if self.trial.should_prune() or valid_acc < self.args.expected_valid_acc:
                         raise optuna.exceptions.TrialPruned()
                 # record loss and accs
                 # explictly early stop
@@ -216,6 +217,16 @@ class Trainer(ABC):
                     if best_count >= 2:
                         return best_acc
         return best_acc  # best valid acc
+
+    def train_once_with_huggingface(self, iter=0):
+        training_args = TrainingArguments(
+            output_dir=self.args.output_dir,
+            overwrite_output_dir=True,
+            do_train=True,
+            do_eval=True,
+            do_predict=True,
+            evaluation_strategy="steps",
+        )
 
     def train(self):
         # NOTE model and metric is also initialized here

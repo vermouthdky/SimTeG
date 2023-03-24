@@ -27,14 +27,20 @@ def objective(single_trial):
 
     # setup optuna and search space
     trial = optuna.integration.TorchDistributedTrial(single_trial)
-    args.epochs = trial.suggest_int("epochs", 5, 10)
-    args.lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
-    args.weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
-    args.label_smoothing = trial.suggest_float("label_smoothing", 0.1, 0.5)
-    args.hidden_dropout_prob = trial.suggest_float("hidden_dropout_prob", 0.1, 0.7)
-    if args.use_adapter:
-        args.adapter_hidden_size = trial.suggest_categorical("adapter_hidden_size", [32, 128, 512, 768])
-    args.attention_dropout_prob = trial.suggest_float("attention_dropout_prob", 0.1, 0.7)
+    args.epochs = trial.suggest_int("epochs", 1, 10)
+    # args.lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+    # args.weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
+    args.gnn_lr = trial.suggest_float("gnn_lr", 1e-5, 1e-3, log=True)
+    args.gnn_weight_decay = trial.suggest_float("gnn_weight_decay", 1e-7, 1e-4, log=True)
+    # args.label_smoothing = trial.suggest_float("label_smoothing", 0.2, 0.4)
+    # args.hidden_dropout_prob = trial.suggest_float("hidden_dropout_prob", 0.1, 0.4)
+    args.accum_interval = trial.suggest_int("accum_interval", 1, 10)
+    args.kl_loss_weight = trial.suggest_float("kl_loss_weight", 0.1, 1.0)
+    args.kl_loss_temp = trial.suggest_int("kl_loss_temp", 0, 4)
+    # if args.use_adapter:
+    #     args.adapter_hidden_size = trial.suggest_categorical("adapter_hidden_size", [32, 64, 128, 512, 768])
+    # if not args.use_adapter:
+    #     args.attention_dropout_prob = trial.suggest_float("attention_dropout_prob", 0.1, 0.7)
     args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.7)
     args.schedular_warmup_ratio = trial.suggest_categorical("schedular_warmup_ratio", [0.1, 0.3, 0.5, 0.7])
     args.optuna = True
@@ -131,5 +137,5 @@ def run(n_trials):
 
 if __name__ == "__main__":
     n_trials = 40
-    # run(n_trials)
-    load_study()
+    run(n_trials)
+    # load_study()
