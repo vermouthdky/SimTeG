@@ -344,11 +344,11 @@ class JK_GAMLP_RLU(nn.Module):
     ):
         super(JK_GAMLP_RLU, self).__init__()
 
-        num_hops = self.num_layers + 1
+        num_hops = args.gnn_num_layers + 1
         nfeat = args.num_feats
-        hidden = self.dim_hidden
-        nclass = args.num_classes
-        dropout = args.dropout
+        hidden = args.hidden_size
+        nclass = args.num_labels
+        dropout = args.header_dropout_prob
 
         self.num_hops = num_hops
         self.pre_dropout = pre_dropout
@@ -383,8 +383,9 @@ class JK_GAMLP_RLU(nn.Module):
         gain = nn.init.calculate_gain("relu")
         nn.init.xavier_uniform_(self.lr_att.weight, gain=gain)
         nn.init.zeros_(self.lr_att.bias)
-        nn.init.xavier_uniform_(self.res_fc.weight, gain=gain)
-        nn.init.zeros_(self.res_fc.bias)
+        if self.residual:
+            nn.init.xavier_uniform_(self.res_fc.weight, gain=gain)
+            nn.init.zeros_(self.res_fc.bias)
         self.lr_output.reset_parameters()
         self.lr_jk_ref.reset_parameters()
         if self.pre_process:
@@ -398,6 +399,8 @@ class JK_GAMLP_RLU(nn.Module):
         if self.pre_process:
             for i in range(len(feature_list)):
                 input_list.append(self.process[i](feature_list[i]))
+        else:
+            input_list = feature_list
         concat_features = torch.cat(input_list, dim=1)
         jk_ref = self.dropout(self.prelu(self.lr_jk_ref(concat_features)))
         attention_scores = [self.act(self.lr_att(torch.cat((jk_ref, x), dim=1))).view(num_node, 1) for x in input_list]
