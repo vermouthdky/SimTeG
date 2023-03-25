@@ -49,10 +49,10 @@ def load_data(args):
         data.x = bert_x
         logger.critical("using bert_x instead of original features!!!")
     evaluator = Evaluator(name=args.dataset)
-    for split in ["train", "valid", "test"]:
-        mask = torch.zeros(data.num_nodes, dtype=torch.bool)
-        mask[split_idx[split]] = True
-        data[f"{split}_mask"] = mask
+    # for split in ["train", "valid", "test"]:
+    #     mask = torch.zeros(data.num_nodes, dtype=torch.bool)
+    #     mask[split_idx[split]] = True
+    #     data[f"{split}_mask"] = mask
     gc.collect()
 
     return data, split_idx, evaluator, dataset.processed_dir

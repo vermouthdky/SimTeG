@@ -13,7 +13,6 @@ class SAGN(nn.Module):
     def __init__(
         self,
         args,
-        num_hops,
         n_layers=2,
         num_heads=1,
         weight_style="attention",
@@ -27,7 +26,7 @@ class SAGN(nn.Module):
         position_emb=False,
     ):
         super(SAGN, self).__init__()
-        num_hops = num_hops
+        num_hops = args.gnn_num_layers + 1
         in_feats = args.num_feats
         hidden = args.gnn_dim_hidden
         out_feats = args.num_labels
@@ -137,6 +136,79 @@ class SAGN(nn.Module):
             return out, a.mean(1) if a is not None else None
         else:
             return out
+
+
+# Enhanced model with a label model in SLE
+class SAGN_SLE(nn.Module):
+    def __init__(self, args, reproduce_previous=True):
+        super().__init__()
+        self._reproduce_previous = reproduce_previous
+        self.base_model = SAGN(args)
+        self.label_model = GroupMLP(
+            in_feats=args.num_labels,
+            hidden=args.hidden_size,
+            out_feats=args.num_heads,
+            n_heads=1,
+            n_layers=args.gnn_num_layers,
+            dropout=args.header_dropout_prob,
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self._reproduce_previous:
+            self.previous_reset_parameters()
+        else:
+            if self.base_model is not None:
+                self.base_model.reset_parameters()
+            if self.label_model is not None:
+                self.label_model.reset_parameters()
+
+    def previous_reset_parameters(self):
+        # To ensure the reproducibility of results from
+        # previous (before clean up) version, we reserve
+        # the old order of initialization.
+        gain = nn.init.calculate_gain("relu")
+        if self.base_model is not None:
+            if hasattr(self.base_model, "multihop_encoders"):
+                for encoder in self.base_model.multihop_encoders:
+                    encoder.reset_parameters()
+            if hasattr(self.base_model, "res_fc"):
+                nn.init.xavier_normal_(self.base_model.res_fc.weight, gain=gain)
+            if hasattr(self.base_model, "hop_attn_l"):
+                if self.base_model._weight_style == "attention":
+                    if self.base_model._zero_inits:
+                        nn.init.zeros_(self.base_model.hop_attn_l)
+                        nn.init.zeros_(self.base_model.hop_attn_r)
+                    else:
+                        nn.init.xavier_normal_(self.base_model.hop_attn_l, gain=gain)
+                        nn.init.xavier_normal_(self.base_model.hop_attn_r, gain=gain)
+            if self.label_model is not None:
+                self.label_model.reset_parameters()
+            if hasattr(self.base_model, "pos_emb"):
+                if self.base_model.pos_emb is not None:
+                    nn.init.xavier_normal_(self.base_model.pos_emb, gain=gain)
+            if hasattr(self.base_model, "post_encoder"):
+                self.base_model.post_encoder.reset_parameters()
+            if hasattr(self.base_model, "bn"):
+                self.base_model.bn.reset_parameters()
+
+        else:
+            if self.label_model is not None:
+                self.label_model.reset_parameters()
+
+    def forward(self, feats, label_emb):
+        out = 0
+        if self.base_model is not None:
+            out = self.base_model(feats)
+
+        if self.label_model is not None:
+            label_out = self.label_model(label_emb).mean(1)
+            if isinstance(out, tuple):
+                out = (out[0] + label_out, out[1])
+            else:
+                out = out + label_out
+
+        return out
 
 
 ################################################################

@@ -3,17 +3,19 @@ import json
 import logging
 import os
 import time
-from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch import nn, optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
+from torch_geometric.transforms import SIGN
 from torchmetrics import Accuracy
 from tqdm import tqdm
+from transformers import Trainer as HuggingFaceTrainer
 from transformers import get_scheduler
 
 import optuna
@@ -21,10 +23,37 @@ import optuna
 from ..model import get_model_class
 from ..utils import is_dist
 
-logger = logging.getLogger(__name__)
+
+class OneIterTrainer(HuggingFaceTrainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        """
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+        Subclass and override for custom behavior.
+        NOTE: add KL divergence here
+        """
+        if self.label_smoother is not None and "labels" in inputs:
+            labels = inputs.pop("labels")
+        else:
+            labels = None
+
+        should_compute_kl = False
+        if "x0" in inputs:
+            x0 = inputs.pop("x0")
+            if x0 is not None:
+                should_compute_kl = True
+        logits, hidden_out = model(**inputs, return_hidden=True)
+        loss = self.label_smoother(logits, labels)
+        if should_compute_kl:
+            kl_loss = F.kl_div(
+                input=F.log_softmax(hidden_out, dim=-1),
+                target=F.softmax(x0, dim=-1),
+                reduction="batchmean",
+            )
+            loss += self.args.kl_loss_weight * kl_loss
+        return (loss, hidden_out) if return_outputs else loss
 
 
-class Trainer(ABC):
+class Trainer:
     def __init__(self, args, data, split_idx, evaluator, **kwargs):
         self.args = args
         self.data = data
@@ -94,6 +123,11 @@ class Trainer(ABC):
             )
         return model, metric
 
+    @staticmethod
+    @abstractmethod
+    def collate_fn(batch):
+        pass
+
     @abstractmethod
     def _get_train_loader(self):
         pass
@@ -153,11 +187,8 @@ class Trainer(ABC):
             self.lr_scheduler.step()
         return loss.item()
 
-    def _list_tensor_to_gpu(self, list: Union[List, Dict]):
-        if isinstance(list, List):
-            return [input.to(self.rank) if isinstance(input, torch.Tensor) else input for input in list]
-        elif isinstance(list, Dict):
-            return {k: v.to(self.rank) if isinstance(v, torch.Tensor) else v for k, v in list.items()}
+    def _list_tensor_to_gpu(self, list: List):
+        return [input.to(self.rank) if isinstance(input, torch.Tensor) else input for input in list]
 
     def train_once(self, iter=0):
         self.optimizer = self._get_optimizer()
@@ -172,12 +203,7 @@ class Trainer(ABC):
             ):
                 batch_input = self._list_tensor_to_gpu(batch_input)
                 kwargs = {"step": step, "accum_interval": self.args.accum_interval, "batch_len": len(self.train_loader)}
-                if isinstance(batch_input, List):
-                    batch_loss = self.training_step(*batch_input, **kwargs)
-                elif isinstance(batch_input, Dict):
-                    batch_loss = self.training_step(**batch_input, **kwargs)
-                else:
-                    raise ValueError("batch_input should be List or Dict")
+                batch_loss = self.training_step(*batch_input, **kwargs)
                 loss += batch_loss
                 dist.barrier()
                 t_end_epoch = time.time()

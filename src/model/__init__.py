@@ -1,11 +1,11 @@
-from .gbert.gbert_v2_modeling import GBert_v2
+from .gbert.gbert_modeling import GBert
 from .gnns.gnn_modeling import GAMLP, SAGN, SIGN
 from .lms.lm_modeling import AdapterDeberta, AdapterRoberta, Deberta, Roberta
 
 
 def get_model_class(model: str, use_adapter: bool = False):
     model_class = {
-        "GBert": GBert_v2,
+        "GBert": GBert,
         "SAGN": SAGN,
         "GAMLP": GAMLP,
         "SIGN": SIGN,

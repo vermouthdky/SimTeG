@@ -7,14 +7,18 @@ from dataclasses import dataclass
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import Dataset, Subset
 from torch.utils.data.distributed import DistributedSampler
+from torch_geometric.transforms import SIGN
 from tqdm import tqdm
 
-from ...trainer import Trainer
+from ..model import get_model_class
 from ..utils import dataset2foldername, is_dist
+from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
+
+# run optuna on gbert_v2
 
 
 class SLE:
@@ -63,58 +67,90 @@ class SLE:
         self.y_embs = adj_t @ self.y_embs
 
 
+class GBertDataset(Dataset):
+    def __init__(self, input_ids, attention_mask, x_emb=None, x0=None, label=None, use_idx=False):
+        self.input_ids = input_ids
+        self.attention_mask = attention_mask
+        self.x_emb = x_emb
+        self.x0 = x0
+        self.label = label
+        self.idx = None
+        if use_idx:
+            self.idx = torch.arange(input_ids.size(0), dtype=torch.long)
+
+    def __len__(self):
+        return self.input_ids.size(0)
+
+    def __getitem__(self, idx):
+        data = {
+            "input_ids": self.input_ids[idx],
+            "attention_mask": self.attention_mask[idx],
+            "x_emb": self.x_emb[idx] if self.x_emb is not None else None,
+            "x0": self.x0[idx] if self.x0 is not None else None,
+            "label": self.label[idx] if self.label is not None else None,
+            "idx": self.idx[idx] if self.idx is not None else None,
+        }
+        # pop up None values
+        for key in list(data.keys()):
+            if data[key] is None:
+                data.pop(key)
+        return data
+
+
 class GBert_Trainer(Trainer):
-    def __init__(self, args, model, data, split_idx, evaluator, **kwargs):
-        self.sle = SLE(split_idx["train"], data.y, args.num_labels, args.SLE_threshold, args.use_SLE)
-        self.x_embs = None
+    def __init__(self, args, data, split_idx, evaluator, **kwargs):
         self.iter = 0
-        super(GBert_Trainer, self).__init__(args, model, data, split_idx, evaluator, **kwargs)
-        self.inference_dataloader = self._get_inference_dataloader()
-        self.adj_t = self._init_adj_t(data.adj_t)
+        super(GBert_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
 
-    def _init_adj_t(self, adj_t):
-        deg = adj_t.sum(dim=1).to(torch.float)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        return deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
-
-    def _get_dataset(self, mask: torch.Tensor, use_pesudo: bool):
-        if use_pesudo:
-            y = self.sle.pesudo_y[mask].view(-1)
+    def _get_optimizer(self):
+        if self.iter == 0:
+            # return torch.optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+            bert_params = list(self.model.module.bert_model.parameters())
+            head_params = list(self.model.module.head.parameters())
         else:
-            y = self.data.y[mask].view(-1)
-        input_ids = self.data.input_ids[mask]
-        attention_mask = self.data.attention_mask[mask]
-        y_embs, x_embs = None, None
-        if self.iter > 0:
-            y_embs = self.sle.y_embs[mask] if self.sle.enabled else None
-            x_embs = self.x_embs[mask]
-        tensors = [input_ids, attention_mask, x_embs, y_embs, y]
-        tensors = [t for t in tensors if t is not None]
-        return TensorDataset(*tensors)
+            bert_params = list(self.model.module.bert_model.parameters())
+            head_params = list(self.model.module.gnn_model.parameters())
+        return torch.optim.AdamW(
+            [
+                {"params": bert_params, "lr": self.args.lr, "weight_decay": self.args.weight_decay},
+                {"params": head_params, "lr": self.args.gnn_lr, "weight_decay": self.args.weight_decay},
+            ],
+        )
 
-    def _get_inference_dataloader(self):
-        input_ids = self.data.input_ids
-        attention_mask = self.data.attention_mask
-        y_embs, x_embs = None, None
-        if self.iter > 0:
-            y_embs = self.sle.y_embs if self.sle.enabled else None
-            x_embs = self.x_embs
-        idx = torch.arange(input_ids.size(0), dtype=torch.long)
-        tensors = [input_ids, attention_mask, x_embs, y_embs, idx]
-        tensors = [t for t in tensors if t is not None]
-        dataset = TensorDataset(*tensors)
-        return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
+    def save_model(self, ckpt_name):
+        if self.rank in [0, -1]:
+            ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
+            # torch.save(self.model.module.bert_model.state_dict(), ckpt_path)
+            # logger.info("Saved the submodule 'bert_model' to {}".format(ckpt_path))
+            torch.save(self.model.state_dict(), ckpt_path)
+            logger.info("Saved the model to {}".format(ckpt_path))
+        if is_dist():
+            dist.barrier()
+
+    def _get_dataset(self, mode):
+        assert mode in ["train", "valid", "test", "all"]
+        # dynamically create dataset
+        dataset = GBertDataset(
+            self.data.input_ids,
+            self.data.attention_mask,
+            self.data.x_emb if self.iter > 0 else None,
+            self.data.x if self.iter > 0 else None,
+            self.data.y.view(-1),
+            use_idx=True if mode == "all" else False,
+        )
+        return dataset if mode == "all" else Subset(dataset, self.split_idx[mode])
 
     def _get_train_loader(self):
-        train_mask = self.sle.pesudo_train_mask
-        train_set = self._get_dataset(train_mask, use_pesudo=True)
+        train_set = self._get_dataset(mode="train")
         return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
+
+    def _get_inference_dataloader(self):
+        dataset = self._get_dataset(mode="all")
+        return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
     def _get_eval_loader(self, mode="test"):
         assert mode in ["train", "valid", "test"]
-        eval_mask = self.split_idx[mode]
-        dataset = self._get_dataset(eval_mask, use_pesudo=False)
+        dataset = self._get_dataset(mode=mode)
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
     def inference_and_evaluate(self, iter):
@@ -187,25 +223,80 @@ class GBert_Trainer(Trainer):
         return all_x_embs, all_logits, results
 
     @torch.no_grad()
-    def inference_step(self, *inputs):
-        return self.model(*inputs, return_hidden=True)
+    def inference_step(self, **inputs):
+        return self.model(**inputs, return_hidden=True)
+
+    def training_step(self, *inputs, **kwargs):
+        self.model.train()
+        inputs, y = inputs[:-1], inputs[-1]
+        if self.iter > 0:
+            inputs, x0 = inputs[:-1], inputs[-1]
+
+        logits, hidden_out = self.model(*inputs, return_hidden=True)
+        loss = self.loss_op(logits, y.to(self.rank))
+        if self.iter > 0:
+            kl_loss = F.kl_div(
+                input=F.log_softmax(hidden_out, dim=-1),
+                target=F.softmax(x0, dim=-1),
+                reduction="batchmean",
+            )
+            kl_loss *= 2**self.args.kl_loss_temp
+            loss += self.args.kl_loss_weight * kl_loss
+        loss.backward()
+        step = kwargs.get("step", 1)
+        accum_interval = kwargs.get("accum_interval", 1)
+        batch_len = kwargs.get("batch_len", 1)
+        if ((step + 1) % accum_interval == 0) or ((step + 1) == batch_len):
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
+        return loss.item()
 
     def train(self):
+        best_valid_acc = 0.0
+        best_count = 0
         for iter in range(self.args.num_iterations):
             logger.warning(f"\n*************** Start iter {iter} training ***************\n")
-
-            ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, iter))
-            if self.args.use_cache and os.path.exists(ckpt_path):
-                logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+            # load the pretrained bert model
+            model = get_model_class("GBert")(self.args, iter)
+            self.model, self.metric = self._init_model_and_metric(model)
+            self.train_loader = self._get_train_loader()
+            self.inference_dataloader = self._get_inference_dataloader()
+            self.eval_loader = {
+                "train": self._get_eval_loader("train"),
+                "valid": self._get_eval_loader("valid"),
+                "test": self._get_eval_loader("test"),
+            }
+            gc.collect()
+            torch.cuda.empty_cache()
+            if self.iter == 0:
+                ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, 0))
+                if self.args.use_cache and os.path.exists(ckpt_path):
+                    logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+                else:
+                    valid_acc = self.train_once(iter)
+                    logger.info("Iter {} Best valid acc: {:.4f}".format(iter, best_valid_acc))
             else:
-                best_valid_acc = self.train_once(iter)
-                logger.info("Iter {} Best valid acc: {:.4f}".format(iter, best_valid_acc))
+                if self.args.inherit:
+                    logger.critical("using inherited weights from the last iteration!")
+                    ckpt_path = os.path.join(
+                        self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter - 1)
+                    )
+                    ckpt = torch.load(ckpt_path, map_location="cpu")
+                    self._load_state_dict(self.model, ckpt, strict=False, is_dist=True)
+                else:
+                    logger.critical("train the model from scratch instead of inheriting!")
+                self.model.to(self.rank)
+                valid_acc = self.train_once(iter)
 
             logger.warning(f"\n*************** Start iter {iter} testing and Postprocessing ***************\n")
             # NOTE init model for the next iteration
             test_t_start = time.time()
+            ckpt_path = os.path.join(self.args.ckpt_dir, "{}_iter_{}_best.pt".format(self.args.model_type, self.iter))
             ckpt = torch.load(ckpt_path, map_location="cpu")
-            self._load_state_dict(self.model, ckpt, is_dist=True)
+            # self._load_state_dict(self.model.module.bert_model, ckpt, is_dist=True)
+            self._load_state_dict(self.model, ckpt, strict=False, is_dist=True)
             self.model.to(self.rank)
             logger.info("initialize iter {} model with ckpt loaded from: {}".format(iter, ckpt_path))
             # NOTE inference for SLE and propogation
@@ -214,12 +305,26 @@ class GBert_Trainer(Trainer):
             self._add_result(f"iter_{iter}_final_test", results)
             self.save_result(self.args.output_dir)
 
+            valid_acc = results["valid_acc"]
+            if valid_acc > best_valid_acc:
+                ckpt_name = "{}_best.pt".format(self.args.model_type)
+                self.save_model(ckpt_name)
+                best_valid_acc = valid_acc
+                best_count = 0
+            else:
+                best_count += 1
+                if best_count >= 2:
+                    return best_valid_acc
+
             self.iter += 1
-            # NOTE SLE
-            if self.sle.enabled:
-                self.sle.update(logits, self.adj_t)
-            self.x_embs = self.adj_t @ hidden_features
+            # preserve data.x for KL divergence loss
+            self.data.x = hidden_features
+            num_layers = self.args.gnn_num_layers
+            self.data = SIGN(num_layers)(self.data)
+            self.data.x_emb = torch.cat([self.data[f"x{i}"] for i in range(1, num_layers + 1)], dim=-1)
+            for i in range(1, num_layers + 1):
+                del self.data[f"x{i}"]
             del hidden_features, logits
-            self.train_loader = self._get_train_loader()
             gc.collect()
             torch.cuda.empty_cache()
+        return best_valid_acc

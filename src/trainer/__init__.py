@@ -1,4 +1,4 @@
-from .gbert_v2_trainer import GBert_v2_Trainer
+from .gbert_trainer import GBert_Trainer
 
 # from .gbert_v3_trainer import GBert_v3_Trainer
 from .gnn_trainer import GNN_Trainer
@@ -11,6 +11,6 @@ def get_trainer_class(model_type):
     elif model_type in ["SAGN", "SIGN", "GAMLP"]:
         return GNN_Trainer
     elif model_type in ["GBert"]:
-        return GBert_v2_Trainer
+        return GBert_Trainer
     else:
         raise NotImplementedError("not implemented")
