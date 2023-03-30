@@ -222,28 +222,6 @@ class Trainer(ABC):
                         return best_acc
         return best_acc  # best valid acc
 
-    # def train_once_with_huggingface(self, iter=0):
-    #     eval_steps = self.args.eval_patience // self.args.batch_size
-    #     train_steps = len(self.train_dataset)
-    #     warm_up_steps = self.args.warmup_ratio * self.args.epochs * len(self.train_loader) // self.args.batch_size
-    #     training_args = TrainingArguments(
-    #         output_dir=self.args.output_dir,
-    #         overwrite_output_dir=True,
-    #         evaluation_strategy="steps",
-    #         eval_steps=eval_steps,
-    #         save_strategy="steps",
-    #         save_steps=eval_steps,
-    #         learning_rate=self.args.lr,
-    #         weight_decay=self.args.weight_decay,
-    #         load_best_model_at_end=True,
-    #         gradient_accumulation_steps=self.args.accum_interval,
-    #         save_total_limit=1,
-    #         per_device_train_batch_size=self.args.batch_size,
-    #         per_device_eval_batch_size=self.args.eval_batch_size,
-    #         warmup_steps=self.args.warmup_steps,
-    #         disable_tqdm=False,
-    #     )
-
     def train(self):
         # NOTE model and metric is also initialized here
         model = get_model_class(self.args.model_type, use_adapter=self.args.use_adapter)(self.args)

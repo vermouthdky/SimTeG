@@ -32,7 +32,7 @@ class Roberta(nn.Module):
         self.bert_model = RobertaModel.from_pretrained("roberta-base", config=config, add_pooling_layer=False)
         self.head = RobertaClassificationHead(config)
 
-    def forward(self, input_ids, att_mask, return_hidden=False):
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         out = self.head(bert_out[0])
         if return_hidden:
@@ -55,7 +55,7 @@ class Deberta(nn.Module):
         self.bert_model = DebertaModel.from_pretrained(pretrained_repo, config=config)
         self.head = DebertaClassificationHead(config)
 
-    def forward(self, input_ids, att_mask, return_hidden=False):
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         out = self.head(bert_out[0])
         if return_hidden:
@@ -82,7 +82,7 @@ class AdapterDeberta(nn.Module):
         if not is_correct:
             raise ValueError("Adapter is not correctly initialized!")
         else:
-            logger.critical("Adapter is correctly initialized!")
+            logger.warning("Adapter is correctly initialized!")
 
     def _check_if_adapter_is_correct(self):
         for name, param in self.bert_model.named_parameters():
@@ -92,7 +92,8 @@ class AdapterDeberta(nn.Module):
                 return False
         return True
 
-    def forward(self, input_ids, att_mask, return_hidden=False):
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
+        # here we set labels here to fix the bug that raise in huggingface trainer class
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         out = self.head(bert_out[0])
         if return_hidden:
@@ -115,7 +116,7 @@ class AdapterRoberta(nn.Module):
         self.bert_model = AdapterRobertaModel.from_pretrained("roberta-base", config=config, add_pooling_layer=False)
         self.head = RobertaClassificationHead(config)
 
-    def forward(self, input_ids, att_mask, return_hidden=False):
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         out = self.head(bert_out[0])
         if return_hidden:

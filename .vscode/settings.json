@@ -7,4 +7,5 @@
     "sync-rsync.shell": "",
     "sync-rsync.autoHideOutput": false,
     "sync-rsync.executable": "/usr/bin/rsync",
+    "python.linting.flake8Enabled": false,
 }

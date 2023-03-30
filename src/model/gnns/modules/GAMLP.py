@@ -257,6 +257,7 @@ class JK_GAMLP(nn.Module):
         nclass = args.num_labels
         dropout = args.header_dropout_prob
 
+        self.hidden_size = hidden
         self.num_hops = num_hops
         self.prelu = nn.PReLU()
         self.pre_dropout = pre_dropout
@@ -299,7 +300,8 @@ class JK_GAMLP(nn.Module):
             for layer in self.process:
                 layer.reset_parameters()
 
-    def forward(self, feature_list):
+    def forward(self, xs: torch.Tensor):
+        feature_list = [x for x in torch.split(xs, self.hidden_size, -1)]
         num_node = feature_list[0].shape[0]
         feature_list = [self.input_drop(feature) for feature in feature_list]
         input_list = []
@@ -350,6 +352,7 @@ class JK_GAMLP_RLU(nn.Module):
         nclass = args.num_labels
         dropout = args.header_dropout_prob
 
+        self.hidden_size = hidden
         self.num_hops = num_hops
         self.pre_dropout = pre_dropout
         self.prelu = nn.PReLU()
@@ -392,7 +395,8 @@ class JK_GAMLP_RLU(nn.Module):
             for layer in self.process:
                 layer.reset_parameters()
 
-    def forward(self, feature_list, label_emb):
+    def forward(self, xs, label_emb):
+        feature_list = [x for x in torch.split(xs, self.hidden_size, -1)]
         num_node = feature_list[0].shape[0]
         feature_list = [self.input_drop(feature) for feature in feature_list]
         input_list = []
