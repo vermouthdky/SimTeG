@@ -1,72 +1,52 @@
 import gc
-import json
 import logging
 import os
-import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import evaluate
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch import nn, optim
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch_geometric.transforms import SIGN
-from torchmetrics import Accuracy
-from tqdm import tqdm
-from transformers import Trainer as HuggingFaceTrainer
-from transformers import get_scheduler
-
-import optuna
+from transformers import EarlyStoppingCallback
+from transformers import Trainer as HugTrainer
+from transformers import TrainingArguments
 
 from ..model import get_model_class
 from ..utils import is_dist
 
-
-class OneIterTrainer(HuggingFaceTrainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        """
-        How the loss is computed by Trainer. By default, all models return the loss in the first element.
-        Subclass and override for custom behavior.
-        NOTE: add KL divergence here
-        """
-        if self.label_smoother is not None and "labels" in inputs:
-            labels = inputs.pop("labels")
-        else:
-            labels = None
-
-        should_compute_kl = False
-        if "x0" in inputs:
-            x0 = inputs.pop("x0")
-            if x0 is not None:
-                should_compute_kl = True
-        logits, hidden_out = model(**inputs, return_hidden=True)
-        loss = self.label_smoother(logits, labels)
-        if should_compute_kl:
-            kl_loss = F.kl_div(
-                input=F.log_softmax(hidden_out, dim=-1),
-                target=F.softmax(x0, dim=-1),
-                reduction="batchmean",
-            )
-            loss += self.args.kl_loss_weight * kl_loss
-        return (loss, hidden_out) if return_outputs else loss
+logger = logging.getLogger(__name__)
 
 
-class Trainer:
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self):
+        super().__init__()
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, idx):
+        pass
+
+
+class OneIterTrainer(HugTrainer):
+    pass
+
+
+class Trainer(ABC):
     def __init__(self, args, data, split_idx, evaluator, **kwargs):
         self.args = args
         self.data = data
         self.split_idx = split_idx
         self.evaluator = evaluator
-        self.loss_op = self._get_loss_op()
-        self.result_dict = {}
-        # initialize optuna
+        self.iter = 0
         self.trial = kwargs.get("trial", None)
 
     @property
     def rank(self):
-        return int(os.environ["RANK"]) if is_dist() else self.args.single_gpu
+        return int(os.environ["RANK"]) if is_dist() else -1
 
     @property
     def world_size(self):
@@ -76,259 +56,129 @@ class Trainer:
     def disable_tqdm(self):
         return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
-    def _add_result(self, key: str, value: Dict[str, Any]):
-        self.result_dict[key] = value
-
-    def save_result(self, path: str):
-        if self.rank in [0, -1]:
-            w_path = os.path.join(path, "results.json")
-            with open(w_path, "w") as f:
-                json.dump(self.result_dict, f)
-            logger.info("Save ckpt to: {}".format(w_path))
+    def save_model(self, model: torch.nn.Module, ckpt_name):
+        if self.rank <= 0:
+            ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
+            torch.save(model.state_dict(), ckpt_path)
+            logger.info("Saved the model to {}".format(ckpt_path))
         if is_dist():
             dist.barrier()
 
-    def _load_state_dict(self, model, state_dict, strict=True, is_dist=False):
-        own_state = model.state_dict()
-        for name, param in state_dict.items():
-            if name[:7] == "module." and not is_dist:  # remove the "module." prefix
-                name = name[7:]
-            if name not in own_state:
-                if strict:
-                    raise KeyError("unexpected key '{}' in model (own_state)".format(name))
-                else:
-                    logger.warning("Ignore unexpected key '{}' in state_dict".format(name))
-                    # logger.warning(
-                    #     "Please make sure the model related parameters in 'test.sh' is consistent with the 'train.sh'!"
-                    # )
-            else:
-                try:
-                    own_state[name].copy_(param)
-                except:  # the param shape is different between DDP and single gpu
-                    own_state[name].copy_(param.squeeze(0))
-
-    def _init_model_and_metric(self, model):
-        metric = Accuracy(task="multiclass", num_classes=self.args.num_labels)
-        model.metric = metric
-        model.to(self.rank)
-        find_unused_parameters = False
-        if not self.args.use_adapter and self.args.model_type in ["GBert", "Deberta"]:
-            find_unused_parameters = True
-        if self.world_size > 1:
-            model = DDP(
-                model,
-                device_ids=[self.rank],
-                output_device=self.rank,
-                find_unused_parameters=find_unused_parameters,
-            )
-        return model, metric
-
-    @staticmethod
-    @abstractmethod
-    def collate_fn(batch):
-        pass
+    def load_model(self, model: torch.nn.Module, ckpt_name):
+        ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(ckpt, strict=False)
 
     @abstractmethod
-    def _get_train_loader(self):
+    def _get_dataset(self, mode):
         pass
 
-    @abstractmethod
-    def _get_eval_loader(self, mode):
-        pass
+    def _prepare_dataset(self):
+        return self._get_dataset("train"), self._get_dataset("valid")
 
-    def _get_dataloader(self, dataset: TensorDataset, batch_size: int, shuffle: bool, collate_fn: Callable = None):
+    def _get_dataloader(self, dataset, batch_size, shuffle, enumerate=False):
         """
         return a dataloader with DistributedSampler:
         NOTE for inference, you have to use 'dist.gather()' to gather the results from all gpus
         """
         sampler = DistributedSampler(dataset, shuffle=shuffle) if is_dist() else None
         shuffle = shuffle if sampler is None else False
-        return DataLoader(dataset, sampler=sampler, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn)
+        return DataLoader(dataset, sampler=sampler, batch_size=batch_size, shuffle=shuffle)
 
-    def save_model(self, ckpt_name):
-        if self.rank in [0, -1]:
-            ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
-            torch.save(self.model.state_dict(), ckpt_path)
-            logger.info("Save ckpt to: {}".format(ckpt_path))
-        if is_dist():
+    @abstractmethod
+    def _prepare_model(self):
+        pass
+
+    @abstractmethod
+    def _prepare_trainer(self):
+        pass
+
+    def inference_and_evaluate(self):
+        embs_path = os.path.join(self.args.output_dir, "cached_embs")
+        if not os.path.exists(embs_path):
+            os.makedirs(embs_path)
+
+        def has_embs(saved_name: Union[str, list[str]]):
+            if isinstance(saved_name, list):
+                return all([has_embs(name) for name in saved_name])
+            return os.path.exists(os.path.join(embs_path, saved_name))
+
+        def save_embs(embs: torch.Tensor, saved_name: str):
+            if self.rank == 0:
+                torch.save(embs, os.path.join(embs_path, saved_name))
+                logger.info(f"Saved {saved_name} to {embs_path}")
             dist.barrier()
 
-    def _get_optimizer(self):
-        return optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+        def load_embs(saved_name: str):
+            return torch.load(os.path.join(embs_path, saved_name))
 
-    def _get_loss_op(self):
-        return torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing)
+        def evalute(logits, y_true):
+            y_pred = logits.argmax(dim=-1, keepdim=True)
+            acc = y_pred.eq(y_true.view_as(y_pred)).sum() / y_true.shape[0]
+            return acc.item()
 
-    def _get_scheduler(self):
-        num_training_steps_per_epoch = len(self.train_loader)
-        num_training_steps = self.args.epochs * num_training_steps_per_epoch
-        num_warmup_steps = int(self.args.warmup_ratio * num_training_steps)
-        return get_scheduler(
-            name=self.args.scheduler_type,
-            optimizer=self.optimizer,
-            num_warmup_steps=num_warmup_steps,
-            num_training_steps=num_training_steps,
-        )
+        x_embs_name = f"iter_{self.iter}_x_embs.pt"
+        logits_name = f"iter_{self.iter}_logits.pt"
+        if self.args.use_cache and has_embs([x_embs_name, logits_name]):
+            logger.info("Loading cached embs...")
+            x_embs = load_embs(x_embs_name)
+            logits_embs = load_embs(logits_name)
+        else:
+            eval_output = self.trainer.predict(self.all_set)
+            logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
+            logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
 
-    def training_step(self, *inputs, **kwargs):
-        self.model.train()
-        # self.optimizer.zero_grad()
-        inputs, y = inputs[:-1], inputs[-1]
-        logits = self.model(*inputs)
-        loss = self.loss_op(logits, y.to(self.rank))
-        loss.backward()
-        step = kwargs.get("step", 1)
-        accum_interval = kwargs.get("accum_interval", 1)
-        batch_len = kwargs.get("batch_len", 1)
-        if ((step + 1) % accum_interval == 0) or ((step + 1) == batch_len):
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-        if self.lr_scheduler is not None:
-            self.lr_scheduler.step()
-        return loss.item()
+        save_embs(x_embs, x_embs_name)
+        save_embs(logits_embs, logits_name)
 
-    def _list_tensor_to_gpu(self, list: List):
-        return [input.to(self.rank) if isinstance(input, torch.Tensor) else input for input in list]
-
-    def train_once(self, iter=0):
-        self.optimizer = self._get_optimizer()
-        self.lr_scheduler = self._get_scheduler()
-        best_acc, best_count = 0.0, 0
-        for epoch in range(self.args.epochs):
-            self.train_loader.sampler.set_epoch(epoch)
-            loss = 0.0
-            t_start_epoch = time.time()
-            for step, batch_input in enumerate(
-                tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=self.disable_tqdm)
-            ):
-                batch_input = self._list_tensor_to_gpu(batch_input)
-                kwargs = {"step": step, "accum_interval": self.args.accum_interval, "batch_len": len(self.train_loader)}
-                batch_loss = self.training_step(*batch_input, **kwargs)
-                loss += batch_loss
-                dist.barrier()
-                t_end_epoch = time.time()
-                train_time_per_epoch = t_end_epoch - t_start_epoch
-                loss /= len(self.train_loader)
-            # evalutation and early stop
-            if (epoch + 1) % self.args.eval_interval == 0:
-                if self.args.save_ckpt_per_valid:
-                    ckpt_name = "{}_iter_{}_epoch_{}.pt".format(self.args.model_type, iter, epoch + 1)
-                    self.save_model(ckpt_name)
-                if self.args.eval_train_set:
-                    train_acc, train_loss, train_time = self.evaluate(mode="train")
-                else:
-                    train_acc, train_loss, train_time = -1, -1, -1
-                valid_acc, valid_loss, valid_time = self.evaluate(mode="valid")
-                result = {
-                    "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "train_acc": train_acc,
-                    "valid_loss": valid_loss,
-                    "valid_acc": valid_acc,
-                    "train_time_per_epoch": train_time_per_epoch,
-                    "inference_time_on_train_set": train_time,
-                    "inference_time_on_valid_set": valid_time,
-                }
-                logger.warning("".join("{}:{:.4f} ".format(k, v) for k, v in result.items()))
-                self._add_result(f"iter_{iter}_epoch_{epoch+1}", result)
-                if self.args.optuna and self.trial is not None:
-                    self.trial.report(valid_acc, epoch + 1)
-                    if self.trial.should_prune() or valid_acc < self.args.expected_valid_acc:
-                        raise optuna.exceptions.TrialPruned()
-                # record loss and accs
-                # explictly early stop
-                if valid_acc > best_acc:
-                    ckpt_name = "{}_iter_{}_best.pt".format(self.args.model_type, iter)
-                    self.save_model(ckpt_name)
-                    best_acc = valid_acc
-                    best_count = 0
-                else:
-                    best_count += 1
-                    if best_count >= 2:
-                        return best_acc
-        return best_acc  # best valid acc
-
-    # def train_once_with_huggingface(self, iter=0):
-    #     eval_steps = self.args.eval_patience // self.args.batch_size
-    #     train_steps = len(self.train_dataset)
-    #     warm_up_steps = self.args.warmup_ratio * self.args.epochs * len(self.train_loader) // self.args.batch_size
-    #     training_args = TrainingArguments(
-    #         output_dir=self.args.output_dir,
-    #         overwrite_output_dir=True,
-    #         evaluation_strategy="steps",
-    #         eval_steps=eval_steps,
-    #         save_strategy="steps",
-    #         save_steps=eval_steps,
-    #         learning_rate=self.args.lr,
-    #         weight_decay=self.args.weight_decay,
-    #         load_best_model_at_end=True,
-    #         gradient_accumulation_steps=self.args.accum_interval,
-    #         save_total_limit=1,
-    #         per_device_train_batch_size=self.args.batch_size,
-    #         per_device_eval_batch_size=self.args.eval_batch_size,
-    #         warmup_steps=self.args.warmup_steps,
-    #         disable_tqdm=False,
-    #     )
-
-    def train(self):
-        # NOTE model and metric is also initialized here
-        model = get_model_class(self.args.model_type, use_adapter=self.args.use_adapter)(self.args)
-        self.model, self.metric = self._init_model_and_metric(model)
-        self.train_loader = self._get_train_loader()
-        self.eval_loader = {
-            "train": self._get_eval_loader("train"),
-            "valid": self._get_eval_loader("valid"),
-            "test": self._get_eval_loader("test"),
-        }
-        t_start = time.time()
-        best_acc = self.train_once()
-        if self.args.optuna and self.trial is not None:
-            self.save_result(self.args.output_dir)
-            return best_acc
-
-        ckpt_path = os.path.join(
-            self.args.ckpt_dir,
-            "{}_iter_{}_best.pt".format(self.args.model_type, 0),
-        )
-        ckpt = torch.load(ckpt_path, map_location="cpu")
-        self._load_state_dict(self.model, ckpt, is_dist=True)
-        self.model.to(self.rank)
-        logger.info("Start testing best model loaded from: {}".format(ckpt_path))
-        result = {}
-        for mode in ["train", "valid", "test"]:
-            eval_acc, eval_loss, eval_time = self.evaluate(mode=mode)
-            result["{}_acc".format(mode)] = eval_acc
-            result["{}_loss".format(mode)] = eval_loss
-            result["{}_time".format(mode)] = eval_time
-
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in result.items()))
-        self._add_result("final_test", result)
-        self.save_result(self.args.output_dir)
-        logger.critical("Training finished, time: {}".format(time.time() - t_start))
+        results = dict()
+        for split in ["train", "valid", "test"]:
+            split_idx = self.split_idx[split]
+            acc = evalute(logits_embs[split_idx], self.data.y[split_idx])
+            loss = F.cross_entropy(logits_embs[split_idx], self.data.y[split_idx].view(-1)).item()
+            results[f"{split}_acc"] = acc
+            results[f"{split}_loss"] = loss
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in results.items()))
+        del logits_embs
         gc.collect()
         torch.cuda.empty_cache()
+        return x_embs, results
 
-    def evaluate(self, mode="test"):
-        assert mode in ["train", "test", "valid"]
-        self.model.eval()
-        eval_loader = self.eval_loader[mode]
-        disable_tqdm = self.args.disable_tqdm or (is_dist() and self.rank > 0)
-        pbar = tqdm(total=len(eval_loader), desc=f"evaluating {mode} set", disable=disable_tqdm)
-        # NOTE torchmetrics support distributed inference
-        self.metric.reset()
-        loss = 0.0
-        t_start_eval = time.time()
-        for step, batch_input in enumerate(eval_loader):
-            batch_input = self._list_tensor_to_gpu(batch_input)
-            batch_input, y_true = batch_input[:-1], batch_input[-1]
-            with torch.no_grad():
-                logits = self.model(*batch_input)
-            y_pred = logits.argmax(dim=-1).view_as(y_true)
-            y_true = y_true.to(self.rank)
-            acc = self.metric(y_pred, y_true)
-            loss += self.loss_op(logits, y_true.squeeze(-1)).item()
-            pbar.update(1)
-        t_end_eval = time.time()
-        acc = self.metric.compute().item()
-        loss /= len(eval_loader)
-        return acc, loss, t_end_eval - t_start_eval
+    def train_once(self, iter):
+        dist.barrier()
+        if self.trial is not None:
+            self.trainer._hp_search_setup(self.trial)
+        train_output = self.trainer.train()  # none if not using optuna
+        self.save_model(self.model, f"iter_{iter}.pt")
+        global_step, train_dict = train_output.global_step, train_output.metrics
+        train_dict["global_step"] = global_step
+        self.trainer.save_metrics("train", train_dict)
+        # print train_dict
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
+        eval_dict = self.trainer.evaluate()
+        self.trainer.save_metrics("eval", eval_dict)
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in eval_dict.items()))
+        return eval_dict["eval_accuracy"]
+
+    def train(self):
+        self.model = self._prepare_model()
+        self.train_set, self.valid_set = self._prepare_dataset()
+        self.all_set = self._get_dataset("all")
+        self.trainer = self._prepare_trainer()
+        iter = self.iter = 0
+
+        ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0")
+        if self.args.use_cache and os.path.exists(ckpt_path):
+            logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+        else:
+            valid_acc = self.train_once(iter)
+            logger.critical("Iter {} Best valid acc: {:.4f}".format(iter, valid_acc))
+
+        logger.warning(f"\n*************** Start iter {iter} testing ***************\n")
+        # NOTE inference for SLE and propogation
+        _, results = self.inference_and_evaluate()
+
+        valid_acc = results["valid_acc"]
+        gc.collect()
+        torch.cuda.empty_cache()
+        return valid_acc

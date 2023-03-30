@@ -14,7 +14,6 @@ def parse_args():
     parser.add_argument("--random_seed", type=int, default=123)
     parser.add_argument("--cont", type=bool, default=False)
     parser.add_argument("--local_rank", type=int)
-    parser.add_argument("--num_trials", type=int, default=10)
     parser.add_argument("--suffix", type=str, default="main")
 
     # parameters for data and model storage
@@ -26,8 +25,6 @@ def parse_args():
     parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
     parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
-    parser.add_argument("--eval_interval", type=int, default=5)
-    parser.add_argument("--eval_patience", type=int, default=50000)
 
     # dataset and fixed model args
     parser.add_argument("--num_labels", type=int)
@@ -46,6 +43,8 @@ def parse_args():
     parser.add_argument("--save_ckpt_per_valid", action="store_true", default=False)
     parser.add_argument("--eval_train_set", action="store_true", default=False)
     parser.add_argument("--inherit", action="store_true", default=False)
+    parser.add_argument("--use_hug_trainer", action="store_true", default=False)
+    parser.add_argument("--fix_gnn", action="store_true", default=False, help="fix gnn model when finetuning bert")
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -69,6 +68,8 @@ def parse_args():
     # training hyperparameters for SLE
     parser.add_argument("--mlp_dim_hidden", type=int, default=128)
     parser.add_argument("--SLE_threshold", type=float, default=0.9)
+    parser.add_argument("--eval_interval", type=int, default=5)
+    parser.add_argument("--eval_patience", type=int, default=50000)
 
     # module hyperparameters
     parser.add_argument("--lm_type", type=str, default="Deberta")
@@ -81,6 +82,8 @@ def parse_args():
 
     # optuna hyperparameters
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
+    parser.add_argument("--n_trials", type=int, default=20)
+    parser.add_argument("--load_study", action="store_true", default=False)
 
     args = parser.parse_args()
     args = _post_init(args)

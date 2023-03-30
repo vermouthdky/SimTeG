@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Subset, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from torch_geometric.transforms import SIGN
 from tqdm import tqdm
@@ -67,34 +67,34 @@ class SLE:
         self.y_embs = adj_t @ self.y_embs
 
 
-class GBertDataset(Dataset):
-    def __init__(self, input_ids, attention_mask, x_emb=None, x0=None, label=None, use_idx=False):
-        self.input_ids = input_ids
-        self.attention_mask = attention_mask
-        self.x_emb = x_emb
-        self.x0 = x0
-        self.label = label
-        self.idx = None
-        if use_idx:
-            self.idx = torch.arange(input_ids.size(0), dtype=torch.long)
+# class GBertDataset(Dataset):
+#     def __init__(self, input_ids, attention_mask, x_emb=None, x0=None, label=None, use_idx=False):
+#         self.input_ids = input_ids
+#         self.attention_mask = attention_mask
+#         self.x_emb = x_emb
+#         self.x0 = x0
+#         self.label = label
+#         self.idx = None
+#         if use_idx:
+#             self.idx = torch.arange(input_ids.size(0), dtype=torch.long)
 
-    def __len__(self):
-        return self.input_ids.size(0)
+#     def __len__(self):
+#         return self.input_ids.size(0)
 
-    def __getitem__(self, idx):
-        data = {
-            "input_ids": self.input_ids[idx],
-            "attention_mask": self.attention_mask[idx],
-            "x_emb": self.x_emb[idx] if self.x_emb is not None else None,
-            "x0": self.x0[idx] if self.x0 is not None else None,
-            "label": self.label[idx] if self.label is not None else None,
-            "idx": self.idx[idx] if self.idx is not None else None,
-        }
-        # pop up None values
-        for key in list(data.keys()):
-            if data[key] is None:
-                data.pop(key)
-        return data
+#     def __getitem__(self, idx):
+#         data = {
+#             "input_ids": self.input_ids[idx],
+#             "attention_mask": self.attention_mask[idx],
+#             "x_emb": self.x_emb[idx] if self.x_emb is not None else None,
+#             "x0": self.x0[idx] if self.x0 is not None else None,
+#             "label": self.label[idx] if self.label is not None else None,
+#             "idx": self.idx[idx] if self.idx is not None else None,
+#         }
+#         # pop up None values
+#         for key in list(data.keys()):
+#             if data[key] is None:
+#                 data.pop(key)
+#         return data
 
 
 class GBert_Trainer(Trainer):
@@ -129,28 +129,32 @@ class GBert_Trainer(Trainer):
 
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
-        # dynamically create dataset
-        dataset = GBertDataset(
-            self.data.input_ids,
-            self.data.attention_mask,
-            self.data.x_emb if self.iter > 0 else None,
-            self.data.x if self.iter > 0 else None,
-            self.data.y.view(-1),
-            use_idx=True if mode == "all" else False,
-        )
-        return dataset if mode == "all" else Subset(dataset, self.split_idx[mode])
-
-    def _get_train_loader(self):
-        train_set = self._get_dataset(mode="train")
-        return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
+        y = self.data.y.view(-1)
+        input_ids = self.data.input_ids
+        attention_mask = self.data.attention_mask
+        x_emb = self.data.x_emb if self.iter > 0 else None
+        x0 = self.data.x if self.iter > 0 else None
+        if mode == "all":
+            idx = torch.arange(input_ids.size(0), dtype=torch.long)
+            tensors = [input_ids, attention_mask, x_emb, idx]
+            tensors = [t for t in tensors if t is not None]
+            return TensorDataset(*tensors)
+        else:
+            tensors = [input_ids, attention_mask, x_emb, x0, y]
+            tensors = [t for t in tensors if t is not None]
+            return Subset(TensorDataset(*tensors), self.split_idx[mode])
 
     def _get_inference_dataloader(self):
-        dataset = self._get_dataset(mode="all")
+        dataset = self._get_dataset("all")
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
-    def _get_eval_loader(self, mode="test"):
+    def _get_train_loader(self):
+        train_set = self._get_dataset("train")
+        return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
+
+    def _get_eval_loader(self, mode):
         assert mode in ["train", "valid", "test"]
-        dataset = self._get_dataset(mode=mode)
+        dataset = self._get_dataset(mode)
         return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
 
     def inference_and_evaluate(self, iter):
@@ -223,8 +227,8 @@ class GBert_Trainer(Trainer):
         return all_x_embs, all_logits, results
 
     @torch.no_grad()
-    def inference_step(self, **inputs):
-        return self.model(**inputs, return_hidden=True)
+    def inference_step(self, *inputs):
+        return self.model(*inputs, return_hidden=True)
 
     def training_step(self, *inputs, **kwargs):
         self.model.train()

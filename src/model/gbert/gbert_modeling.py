@@ -4,7 +4,7 @@ import os
 import torch
 import torch.distributed as dist
 from torch import nn
-from transformers import AutoConfig, DebertaModel, RobertaModel
+from transformers import AutoConfig, DebertaModel, PreTrainedModel, RobertaModel
 from transformers import logging as transformers_logging
 
 from ..gnns.modules import GAMLP, GAMLP_SLE, SAGN, SAGN_SLE
@@ -20,15 +20,21 @@ transformers_logging.set_verbosity_error()
 
 
 class GBert(nn.Module):
-    def __init__(self, args, iter: int):
-        super(GBert, self).__init__()
+    def __init__(self, args, iter: int = 0, module_to_train: str = "lm"):
+        super().__init__()
+        assert module_to_train in ["lm", "gnn"]
         self.iter = iter
         self.hidden_size = args.hidden_size
-        if self.iter == 0:
-            self.bert_model, self.head = self._get_bert_model(args, head=True)
-        else:
-            self.bert_model = self._get_bert_model(args, head=False)
+        self.module_to_train = module_to_train
+
+        if module_to_train == "gnn":
             self.gnn_model = self._get_gnn_model(args)
+        else:
+            self.bert_model = self._get_bert_model(args)
+            if self.iter == 0:
+                self.head = self._get_header_model(args)
+            else:
+                self.gnn_model = self._get_gnn_model(args)
 
     def _get_config(self, args):
         pretrained_repo = args.pretrained_repo
@@ -57,45 +63,57 @@ class GBert(nn.Module):
             raise NotImplementedError
         return gnn_model
 
-    def _get_bert_model(self, args, head: bool):
+    def _get_header_model(self, args):
+        pretrained_repo = args.pretrained_repo
+        config = self._get_config(args)
+        if pretrained_repo == "microsoft/deberta-base":
+            return DebertaClassificationHead(config)
+        elif pretrained_repo == "roberta-base":
+            return RobertaClassificationHead(config)
+        else:
+            raise NotImplementedError("Invalid header name from repo {}".format(pretrained_repo))
+
+    def _get_bert_model(self, args):
         pretrained_repo = args.pretrained_repo
         config = self._get_config(args)
         if pretrained_repo == "microsoft/deberta-base" and args.use_adapter:
             bert = AdapterDebertaModel.from_pretrained(pretrained_repo, config=config)
-            header = DebertaClassificationHead(config)
         elif pretrained_repo == "microsoft/deberta-base" and not args.use_adapter:
             bert = DebertaModel.from_pretrained(pretrained_repo, config=config)
-            header = DebertaClassificationHead(config)
         elif pretrained_repo == "roberta-base" and args.use_adapter:
             bert = AdapterRobertaModel.from_pretrained(pretrained_repo, config=config)
-            header = RobertaClassificationHead(config)
         elif pretrained_repo == "roberta-base" and not args.use_adapter:
             bert = RobertaModel.from_pretrained(pretrained_repo, config=config)
-            header = RobertaClassificationHead(config)
         else:
             raise NotImplementedError("Invalid model name")
         if args.use_adapter:
-            logger.critical("using adapter!!!")
-        if head:
-            return bert, header
-        else:
-            return bert
+            logger.warning("using adapter!!!")
+        return bert
 
-    def forward(self, input_ids, att_mask, x_emb=None, y_emb=None, return_hidden=False):
-        bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
-        hidden_features = bert_out[0]
-        if self.iter == 0:
-            logits = self.head(hidden_features)
+    def forward(self, input_ids=None, att_mask=None, x_emb=None, y_emb=None, labels=None, return_hidden=False):
+        # labels should not be reomved to be consistent with the trainer class (huggingface)
+        if self.module_to_train == "lm":
+            bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)[0]
+            if hasattr(self, "head"):
+                logits = self.head(bert_out)
+            else:  # use gnn as header
+                assert x_emb is not None
+                bert_out = bert_out[:, 0, :]
+                xs = torch.cat([bert_out, x_emb], dim=-1)
+                logits = self.gnn_model(x_emb, y_emb)
+                if return_hidden == True:
+                    return logits, bert_out
+                else:
+                    return logits
         else:
             assert x_emb is not None
-            bert_out = hidden_features[:, 0, :]
-            xs = [bert_out] + [x for x in torch.split(x_emb, self.hidden_size, -1)]
-            logits = self.gnn_model(xs)
-
-            # if self.use_SLE and y_emb is not None:
-            #     logits += self.lp_model(y_emb).squeeze(dim=1)
-
-        if return_hidden:
-            return logits, hidden_features[:, 0, :]
-        else:
+            logits = self.gnn_model(x_emb, y_emb)
             return logits
+
+    def gnn_foward(self, x_emb, y_emb):
+        if y_emb is not None:
+            return self.gnn_model(x_emb, y_emb)
+        else:
+            return self.gnn_model(x_emb)
+
+    # TODO : modify the trainer class to support this
