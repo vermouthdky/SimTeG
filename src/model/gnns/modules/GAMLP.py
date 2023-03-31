@@ -255,7 +255,7 @@ class JK_GAMLP(nn.Module):
         nfeat = args.num_feats
         hidden = args.hidden_size
         nclass = args.num_labels
-        dropout = args.header_dropout_prob
+        dropout = args.gnn_dropout
 
         self.hidden_size = hidden
         self.num_hops = num_hops

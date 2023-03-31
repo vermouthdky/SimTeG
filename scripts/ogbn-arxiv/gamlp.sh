@@ -16,9 +16,7 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --eval_batch_size 10000 \
     --epochs 500 \
     --accum_interval 1 \
-    --hidden_dropout_prob 0.12 \
-    --header_dropout_prob 0.15 \
-    --attention_dropout_prob 0.18 \
+    --gnn_dropout 0.15 \
     --label_smoothing 0.5 \
-    --scheduler_warmup_ratio 0.3 \
+    --warmup_ratio 0.3 \
     --use_bert_x

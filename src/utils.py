@@ -2,9 +2,35 @@ import logging
 import os
 import sys
 from datetime import datetime
+from typing import List, Union
 
 import colorlog
-from torch.distributed import barrier
+import torch
+import torch.distributed as dist
+
+
+class EmbeddingHandler:
+    def __init__(self, emb_path: str):
+        self.emb_path = emb_path
+        if not os.path.exists(self.emb_path):
+            os.makedirs(self.emb_path)
+
+    def save(self, emb: torch.Tensor, saved_name: str):
+        saved_name = os.path.join(self.emb_path, saved_name)
+        rank = int(os.environ["RANK"]) if is_dist() else -1
+        if rank <= 0:
+            torch.save(emb, saved_name)
+        dist.barrier()
+
+    def load(self, saved_name: str):
+        if not self.has(saved_name):
+            return None
+        return torch.load(os.path.join(self.emb_path, saved_name))
+
+    def has(self, saved_name: Union[str, List[str]]):
+        if isinstance(saved_name, List):
+            return all([os.path.exists(os.path.join(self.emb_path, name)) for name in saved_name])
+        return os.path.exists(os.path.join(self.emb_path, saved_name))
 
 
 def dataset2foldername(dataset):
