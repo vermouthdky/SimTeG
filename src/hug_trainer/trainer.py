@@ -10,12 +10,13 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from tqdm import tqdm
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
 from transformers import TrainingArguments
 
 from ..model import get_model_class
-from ..utils import is_dist
+from ..utils import EmbeddingHandler, is_dist
 
 logger = logging.getLogger(__name__)
 
@@ -97,20 +98,7 @@ class Trainer(ABC):
         embs_path = os.path.join(self.args.output_dir, "cached_embs")
         if not os.path.exists(embs_path):
             os.makedirs(embs_path)
-
-        def has_embs(saved_name: Union[str, list[str]]):
-            if isinstance(saved_name, list):
-                return all([has_embs(name) for name in saved_name])
-            return os.path.exists(os.path.join(embs_path, saved_name))
-
-        def save_embs(embs: torch.Tensor, saved_name: str):
-            if self.rank == 0:
-                torch.save(embs, os.path.join(embs_path, saved_name))
-                logger.info(f"Saved {saved_name} to {embs_path}")
-            dist.barrier()
-
-        def load_embs(saved_name: str):
-            return torch.load(os.path.join(embs_path, saved_name))
+        emb_handler = EmbeddingHandler(embs_path)
 
         def evalute(logits, y_true):
             y_pred = logits.argmax(dim=-1, keepdim=True)
@@ -119,17 +107,16 @@ class Trainer(ABC):
 
         x_embs_name = f"iter_{self.iter}_x_embs.pt"
         logits_name = f"iter_{self.iter}_logits.pt"
-        if self.args.use_cache and has_embs([x_embs_name, logits_name]):
-            logger.info("Loading cached embs...")
-            x_embs = load_embs(x_embs_name)
-            logits_embs = load_embs(logits_name)
-        else:
+        if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
+            logger.info("Load cached embs")
+            x_embs = emb_handler.load(x_embs_name)
+            logits_embs = emb_handler.load(logits_name)
+        else:  # inference
             eval_output = self.trainer.predict(self.all_set)
             logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
             logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
-
-        save_embs(x_embs, x_embs_name)
-        save_embs(logits_embs, logits_name)
+            emb_handler.save(x_embs, x_embs_name)
+            emb_handler.save(logits_embs, logits_name)
 
         results = dict()
         for split in ["train", "valid", "test"]:
@@ -138,7 +125,7 @@ class Trainer(ABC):
             loss = F.cross_entropy(logits_embs[split_idx], self.data.y[split_idx].view(-1)).item()
             results[f"{split}_acc"] = acc
             results[f"{split}_loss"] = loss
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in results.items()))
+        logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
         del logits_embs
         gc.collect()
         torch.cuda.empty_cache()
@@ -176,7 +163,7 @@ class Trainer(ABC):
 
         logger.warning(f"\n*************** Start iter {iter} testing ***************\n")
         # NOTE inference for SLE and propogation
-        _, results = self.inference_and_evaluate()
+        _, results = self.inference_and_evaluate("lm")
 
         valid_acc = results["valid_acc"]
         gc.collect()

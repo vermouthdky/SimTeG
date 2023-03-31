@@ -25,4 +25,13 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --warmup_ratio 0.5 \
     --use_adapter \
     --inherit \
-    --use_cache
+    --use_hug_trainer \
+    --use_cache \
+    --gnn_lr 0.01 \
+    --gnn_eval_interval 5 \
+    --gnn_weight_decay 1e-7 \
+    --gnn_batch_size 10000 \
+    --gnn_eval_batch_size 10000 \
+    --gnn_epochs 100 \
+    --gnn_dropout 0.15 \
+    --gnn_label_smoothing 0.5

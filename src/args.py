@@ -73,12 +73,19 @@ def parse_args():
 
     # module hyperparameters
     parser.add_argument("--lm_type", type=str, default="Deberta")
+    # gnn parameters, alternative options for gnn when training gbert
+    # NOTE: only used when training gbert, should set the general parameters when training sole gnn
+    parser.add_argument("--gnn_eval_interval", type=int, default=5)
     parser.add_argument("--gnn_num_layers", type=int, default=4)
     parser.add_argument("--gnn_type", type=str, default="GAMLP")
     parser.add_argument("--gnn_dropout", type=float, default=0.2)
     parser.add_argument("--gnn_dim_hidden", type=int, default=256)
-    parser.add_argument("--gnn_lr", type=float, default=5e-4, help="only used for gbert")
-    parser.add_argument("--gnn_weight_decay", type=float, default=1e-5, help="only used for gbert")
+    parser.add_argument("--gnn_lr", type=float, default=5e-4)
+    parser.add_argument("--gnn_weight_decay", type=float, default=1e-5)
+    parser.add_argument("--gnn_label_smoothing", type=float, default=0.1)
+    parser.add_argument("--gnn_batch_size", type=int, default=10000)
+    parser.add_argument("--gnn_eval_batch_size", type=int, default=10000)
+    parser.add_argument("--gnn_epochs", type=int, default=500)
 
     # optuna hyperparameters
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)

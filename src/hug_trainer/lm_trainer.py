@@ -101,6 +101,7 @@ class LM_Trainer(Trainer):
             save_steps=eval_steps,
             learning_rate=self.args.lr,
             weight_decay=self.args.weight_decay,
+            metric_for_best_model="eval_accuracy",
             load_best_model_at_end=True,
             gradient_accumulation_steps=self.args.accum_interval,
             label_smoothing_factor=self.args.label_smoothing,

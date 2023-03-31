@@ -15,14 +15,14 @@ ckpt_dir=${output_dir}/ckpt
 mkdir -p ${output_dir}
 mkdir -p ${ckpt_dir}
 
-# torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
-#     --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
-#     $@ 2>&1 | tee ${output_dir}/log.txt
+torchrun --nproc_per_node $WORLD_SIZE --master_port $MASTER_PORT main.py \
+    --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
+    $@ 2>&1 | tee ${output_dir}/log.txt
 
 # deepspeed main.py \
 #     --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
 #     $@ 2>&1 | tee ${output_dir}/log.txt
 
-accelerate launch main.py \
-    --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
-    $@ 2>&1 | tee ${output_dir}/log.txt
+# accelerate launch main.py \
+#     --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
+#     $@ 2>&1 | tee ${output_dir}/log.txt

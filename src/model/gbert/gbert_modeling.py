@@ -90,30 +90,32 @@ class GBert(nn.Module):
             logger.warning("using adapter!!!")
         return bert
 
-    def forward(self, input_ids=None, att_mask=None, x_emb=None, y_emb=None, labels=None, return_hidden=False):
-        # labels should not be reomved to be consistent with the trainer class (huggingface)
-        if self.module_to_train == "lm":
-            bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)[0]
-            if hasattr(self, "head"):
-                logits = self.head(bert_out)
-            else:  # use gnn as header
-                assert x_emb is not None
-                bert_out = bert_out[:, 0, :]
-                xs = torch.cat([bert_out, x_emb], dim=-1)
-                logits = self.gnn_model(x_emb, y_emb)
-                if return_hidden == True:
-                    return logits, bert_out
-                else:
-                    return logits
-        else:
-            assert x_emb is not None
-            logits = self.gnn_model(x_emb, y_emb)
-            return logits
-
     def gnn_foward(self, x_emb, y_emb):
         if y_emb is not None:
             return self.gnn_model(x_emb, y_emb)
         else:
             return self.gnn_model(x_emb)
 
-    # TODO : modify the trainer class to support this
+    def forward(self, input_ids=None, att_mask=None, x_emb=None, y_emb=None, x0=None, labels=None, return_hidden=False):
+        # labels should not be reomved to be consistent with the trainer class (huggingface)
+        if self.module_to_train == "lm":
+            assert x0 is None
+            bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)[0]
+            hidden_features = bert_out[:, 0, :]
+            if hasattr(self, "head"):
+                logits = self.head(bert_out)
+            else:  # use gnn as header
+                assert x_emb is not None
+                x_emb = torch.cat((hidden_features, x_emb), dim=-1)
+                logits = self.gnn_foward(x_emb, y_emb)
+
+            if return_hidden == True:
+                return logits, hidden_features
+            else:
+                return logits
+        else:
+            assert x_emb is not None
+            assert x0 is not None
+            x_emb = torch.cat((x0, x_emb), dim=-1)
+            logits = self.gnn_foward(x_emb, y_emb)
+            return logits
