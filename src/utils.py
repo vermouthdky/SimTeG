@@ -53,8 +53,9 @@ def set_logging():
     # NOTE: clear the std::out handler first to avoid duplicated output
     if root.hasHandlers():
         root.handlers.clear()
+
     root.setLevel(logging.INFO)
-    log_format = "[%(name)s %(asctime)s] %(message)s"
+    log_format = "%(message)s"
     color_format = "%(log_color)s" + log_format
 
     console_handler = logging.StreamHandler(sys.stdout)
@@ -62,14 +63,6 @@ def set_logging():
     console_handler.setFormatter(colorlog.ColoredFormatter(color_format))
     console_handler.addFilter(RankFilter())
     root.addHandler(console_handler)
-    # if not os.path.exists("./logs"):
-    #     os.mkdir("./logs")
-    # date_time = datetime.now().strftime("%Y-%b-%d_%H-%M")
-    # file_handler = logging.FileHandler("./logs/{}.log".format(date_time))
-    # file_handler.setLevel(logging.INFO)
-    # file_handler.setFormatter(formatter)
-    # file_handler.addFilter(RankFilter())  # setup filter
-    # root.addHandler(file_handler)
 
 
 if __name__ == "__main__":

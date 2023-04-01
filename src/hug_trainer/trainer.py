@@ -57,9 +57,8 @@ class Trainer(ABC):
     def disable_tqdm(self):
         return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
-    def save_model(self, model: torch.nn.Module, ckpt_name):
+    def save_model(self, model: torch.nn.Module, ckpt_path):
         if self.rank <= 0:
-            ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
             torch.save(model.state_dict(), ckpt_path)
             logger.info("Saved the model to {}".format(ckpt_path))
         if is_dist():
@@ -76,6 +75,10 @@ class Trainer(ABC):
 
     def _prepare_dataset(self):
         return self._get_dataset("train"), self._get_dataset("valid")
+
+    def update_data(self, data, split_idx):
+        self.data = data
+        self.split_idx = split_idx
 
     def _get_dataloader(self, dataset, batch_size, shuffle, enumerate=False):
         """
@@ -94,58 +97,38 @@ class Trainer(ABC):
     def _prepare_trainer(self):
         pass
 
-    def inference_and_evaluate(self):
-        embs_path = os.path.join(self.args.output_dir, "cached_embs")
-        if not os.path.exists(embs_path):
-            os.makedirs(embs_path)
-        emb_handler = EmbeddingHandler(embs_path)
+    @abstractmethod
+    def inference(self, dataset, embs_path):
+        pass
 
-        def evalute(logits, y_true):
+    def _evaluate(self, logits, y):
+        def accuracy(logits, y_true):
             y_pred = logits.argmax(dim=-1, keepdim=True)
             acc = y_pred.eq(y_true.view_as(y_pred)).sum() / y_true.shape[0]
             return acc.item()
 
-        x_embs_name = f"iter_{self.iter}_x_embs.pt"
-        logits_name = f"iter_{self.iter}_logits.pt"
-        if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
-            logger.info("Load cached embs")
-            x_embs = emb_handler.load(x_embs_name)
-            logits_embs = emb_handler.load(logits_name)
-        else:  # inference
-            eval_output = self.trainer.predict(self.all_set)
-            logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
-            logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
-            emb_handler.save(x_embs, x_embs_name)
-            emb_handler.save(logits_embs, logits_name)
-
         results = dict()
         for split in ["train", "valid", "test"]:
             split_idx = self.split_idx[split]
-            acc = evalute(logits_embs[split_idx], self.data.y[split_idx])
-            loss = F.cross_entropy(logits_embs[split_idx], self.data.y[split_idx].view(-1)).item()
+            acc = accuracy(logits[split_idx], y[split_idx])
+            loss = F.cross_entropy(logits[split_idx], y[split_idx].view(-1)).item()
             results[f"{split}_acc"] = acc
             results[f"{split}_loss"] = loss
+        return results
+
+    def inference_and_evaluate(self):
+        embs_path = os.path.join(self.trainer.args.output_dir, "cached_embs")
+        logits_embs, x_embs = self.inference(self.all_set, embs_path)
+        results = self._evaluate(logits_embs, self.data.y)
         logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
         del logits_embs
         gc.collect()
         torch.cuda.empty_cache()
-        return x_embs, results
+        return x_embs, results  # x_embs is None in GNNTrainer
 
+    @abstractmethod
     def train_once(self, iter):
-        dist.barrier()
-        if self.trial is not None:
-            self.trainer._hp_search_setup(self.trial)
-        train_output = self.trainer.train()  # none if not using optuna
-        self.save_model(self.model, f"iter_{iter}.pt")
-        global_step, train_dict = train_output.global_step, train_output.metrics
-        train_dict["global_step"] = global_step
-        self.trainer.save_metrics("train", train_dict)
-        # print train_dict
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
-        eval_dict = self.trainer.evaluate()
-        self.trainer.save_metrics("eval", eval_dict)
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in eval_dict.items()))
-        return eval_dict["eval_accuracy"]
+        pass
 
     def train(self):
         self.model = self._prepare_model()
@@ -163,7 +146,7 @@ class Trainer(ABC):
 
         logger.warning(f"\n*************** Start iter {iter} testing ***************\n")
         # NOTE inference for SLE and propogation
-        _, results = self.inference_and_evaluate("lm")
+        _, results = self.inference_and_evaluate()
 
         valid_acc = results["valid_acc"]
         gc.collect()
