@@ -12,9 +12,9 @@ from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
 from transformers import TrainingArguments as HugTrainerAugments
 
-from ..model import get_model_class
-from ..utils import EmbeddingHandler, is_dist
-from .trainer import Trainer
+from ...model import get_model_class
+from ...utils import EmbeddingHandler, is_dist
+from ..trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class LMTrainer(HugTrainer):
             if x0 is not None:
                 should_compute_kl = True
 
-        if return_outputs:
+        if return_outputs or should_compute_kl:
             logits, hidden_features = model(**inputs, return_hidden=True)
         else:
             logits = model(**inputs, return_hidden=False)
@@ -116,12 +116,13 @@ class GBert_Trainer(Trainer):
     def _get_dataset(self, mode, module_to_train: str):
         assert mode in ["train", "valid", "test", "all"]
         assert module_to_train in ["gnn", "lm"]
+        should_feed_x0 = self.iter > 0 and mode == "train" and self.args.compute_kl_loss
         if module_to_train == "lm":
             dataset = Dataset(
                 self.data.input_ids,
                 self.data.attention_mask,
                 self.data.x_emb if self.iter > 0 else None,
-                self.data.x if self.iter > 0 and mode == "train" else None,
+                self.data.x if should_feed_x0 else None,
                 self.data.y,
             )
         else:
@@ -232,7 +233,7 @@ class GBert_Trainer(Trainer):
 
     def _lm_inference(self, embs_path):
         x_embs_name = f"iter_{self.iter}_x_embs.pt"
-        logits_name = f"iter_{self.iter}_logits.pt"
+        logits_name = f"iter_{self.iter}_lm_logits.pt"
         emb_handler = EmbeddingHandler(embs_path)
         if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
             x_embs = emb_handler.load(x_embs_name)
@@ -248,13 +249,15 @@ class GBert_Trainer(Trainer):
         return logits_embs, x_embs
 
     def _gnn_inference(self, embs_path):
-        logits_name = f"iter_{self.iter}_logits.pt"
+        logits_name = f"iter_{self.iter}_gnn_logits.pt"
         emb_handler = EmbeddingHandler(embs_path)
         if self.args.use_cache and emb_handler.has(logits_name):
             logits_embs = emb_handler.load(logits_name)
+            logits_embs = torch.from_numpy(logits_embs)
         else:
             eval_output = self.trainer.predict(self.all_set)
             logits_embs = eval_output.predictions
+            logits_embs = torch.from_numpy(logits_embs)
             emb_handler.save(logits_embs, logits_name)
             logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
         return logits_embs
@@ -301,7 +304,8 @@ class GBert_Trainer(Trainer):
             if module_to_train == "gnn":
                 self.load_model(self.model.gnn_model, self.ckpt_name(iter, "gnn"))
             if module_to_train == "lm":
-                self.load_model(self.model.bert_model, self.ckpt_name(iter - 1, "lm"))
+                if self.args.inherit:
+                    self.load_model(self.model.bert_model, self.ckpt_name(iter - 1, "lm"))
                 self.load_model(self.model.gnn_model, self.ckpt_name(iter - 1, "gnn"))
 
         self.train_set, self.valid_set = self._prepare_dataset(module_to_train)
@@ -323,9 +327,9 @@ class GBert_Trainer(Trainer):
         logger.critical("iter: {}, {} stage: ".format(iter, module_to_train))
         logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
 
-        eval_dict = self.trainer.evaluate()
-        self.trainer.save_metrics("eval", eval_dict)
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in eval_dict.items()))
+        # eval_dict = self.trainer.evaluate()
+        # self.trainer.save_metrics("eval", eval_dict)
+        # logger.critical("".join("{}:{} ".format(k, v) for k, v in eval_dict.items()))
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -336,20 +340,18 @@ class GBert_Trainer(Trainer):
             self.iter = iter
             logger.critical(f"\n*************** Start iter {iter} training ***************\n")
             logger.warning(f"\n*************** Start LM training ***************\n")
-            if self.iter == 0:
-                ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0_lm.pt")
-                if self.args.use_cache and os.path.exists(ckpt_path):
-                    logger.info(f"use cached ckpt instead")
-                else:
-                    self.train_once(iter, "lm")
+            ckpt_path = os.path.join(self.args.ckpt_dir, f"iter_{iter}_lm.pt")
+            if self.args.use_cache and os.path.exists(ckpt_path):
+                logger.info(f"use cached ckpt instead")
             else:
                 self.train_once(iter, "lm")
 
-            logger.warning(f"\n*************** Start iter {iter} testing and Postprocessing ***************\n")
+            logger.logging("start testing lm")
             # NOTE inference for SLE and propogation
             self.all_set = self._get_dataset("all", "lm")
             hidden_features, results = self.inference_and_evaluate("lm")
 
+            logger.info("propogating hidden features on the graph")
             # preserve data.x for KL divergence loss
             num_layers = self.args.gnn_num_layers
             self.data.x = hidden_features
@@ -361,7 +363,11 @@ class GBert_Trainer(Trainer):
             torch.cuda.empty_cache()
 
             logger.warning("\n*************** Start GNN training ***************\n")
-            self.train_once(iter, "gnn")
+            ckpt_path = os.path.join(self.args.ckpt_dir, f"iter_{iter}_gnn.pt")
+            if self.args.use_cache and os.path.exists(ckpt_path):
+                logger.info(f"use cached ckpt instead")
+            else:
+                self.train_once(iter, "gnn")
             self.all_set = self._get_dataset("all", "gnn")
             results = self.inference_and_evaluate("gnn")
             valid_acc = results["valid_acc"]

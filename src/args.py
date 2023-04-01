@@ -45,6 +45,7 @@ def parse_args():
     parser.add_argument("--inherit", action="store_true", default=False)
     parser.add_argument("--use_hug_trainer", action="store_true", default=False)
     parser.add_argument("--fix_gnn", action="store_true", default=False, help="fix gnn model when finetuning bert")
+    parser.add_argument("--compute_kl_loss", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
