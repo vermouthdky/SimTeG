@@ -9,6 +9,7 @@ import torch
 import torch.distributed as dist
 import torch_geometric.transforms as T
 from ogb.nodeproppred import Evaluator
+from torch_geometric.utils import subgraph
 
 from .dataset import load_dataset
 from .utils import dataset2foldername, is_dist
@@ -47,9 +48,6 @@ def load_data(args):
     data = dataset.data
     # explictly convert to sparse tensor
     if args.dataset == "ogbn-arxiv":
-        # if args.model_type == "GBert":
-        #     transform = T.Compose([T.ToUndirected(), T.ToSparseTensor()])
-        # else:
         transform = T.ToUndirected()
         data = transform(data)
     # if use bert_x, change it
@@ -57,13 +55,16 @@ def load_data(args):
         saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
         bert_x = torch.load(saved_dir)
         data.x = bert_x
-        logger.critical("using bert_x instead of original features!!!")
+        logger.warning("using bert_x instead of original features!!!")
     evaluator = Evaluator(name=args.dataset)
-    # for split in ["train", "valid", "test"]:
-    #     mask = torch.zeros(data.num_nodes, dtype=torch.bool)
-    #     mask[split_idx[split]] = True
-    #     data[f"{split}_mask"] = mask
     gc.collect()
+
+    if args.debug:
+        all_idx = torch.arange(0, 3000)
+        data = data.subgraph(all_idx)
+        split_idx["train"] = all_idx[:1000]
+        split_idx["valid"] = all_idx[1000:2000]
+        split_idx["test"] = all_idx[2000:3000]
 
     return data, split_idx, evaluator, dataset.processed_dir
 

@@ -5,6 +5,7 @@ import os.path as osp
 import shutil
 
 import evaluate
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -32,7 +33,7 @@ class Dataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.data["labels"])
 
-    def __getitem__(self, idx):
+    def __getitem__(self, index):
         if isinstance(index, torch.Tensor):
             index = index.item()
         batch_data = dict()
@@ -62,17 +63,13 @@ class InnerTrainer(HugTrainer):
 
 
 class GNNTrainer(Trainer):
-    def ckpt_path(self, iter, module="gnn"):
-        # NOTE: module is not used here; default gnn
-        ckpt_dir = osp.join(self.args.ckpt_dir, "gnn")
-        if not osp.exists(ckpt_dir):
-            os.makedirs(ckpt_dir)
-        return osp.join(ckpt_dir, "gnn", f"iter_{iter}_gnn.pt")
+    def ckpt_path(self, iter, stage="gnn", module="gnn"):
+        return osp.join(self.args.ckpt_dir, f"iter_{iter}_{stage}_{module}.pt")
 
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
         dataset = Dataset(x_emb=self.data.x_emb, x0=self.data.x, labels=self.data.y)
-        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.data.split_idx[mode])
+        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
     def _prepare_datset(self):
         return self._get_dataset("train"), self._get_dataset("valid")
@@ -134,9 +131,12 @@ class GNNTrainer(Trainer):
         emb_handler = EmbeddingHandler(embs_path)
         if self.args.use_cache and emb_handler.has(logits_name):
             logits_embs = emb_handler.load(logits_name)
+            if isinstance(logits_embs, np.ndarray):
+                logits_embs = torch.from_numpy(logits_embs)
         else:
             eval_output = self.trainer.predict(dataset)
             logits_embs = eval_output.predictions
+            logits_embs = torch.from_numpy(logits_embs)
             emb_handler.save(logits_embs, logits_name)
             logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
         return (logits_embs, None)
@@ -144,15 +144,16 @@ class GNNTrainer(Trainer):
     def train_once(self, iter):
         dist.barrier()
         self.model = self._prepare_model()
+        # TODO: maybe we should not load the gnn model here
         if iter > 0 and self.args.inherit:
-            self.load_model(self.model.gnn_model, self.ckpt_path(iter - 1))
+            self.load_model(self.model.gnn_model, self.ckpt_path(iter, "lm", "gnn"))
 
         self.train_set, self.valid_set = self._prepare_datset()
         self.trainer = self._prepare_trainer()
         if self.trial is not None:
             self.trainer._hp_search_setup(self.trial)
         train_output = self.trainer.train()
-        self.save_model(self.model.gnn_model, self.ckpt_path(iter))
+        self.save_model(self.model.gnn_model, self.ckpt_path(iter, "gnn", "gnn"))
         global_step, train_dict = train_output.global_step, train_output.metrics
         train_dict["global_step"] = global_step
         self.trainer.save_metrics("train", train_dict)

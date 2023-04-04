@@ -57,6 +57,9 @@ class Trainer(ABC):
     def disable_tqdm(self):
         return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
+    def next_iter(self):
+        self.iter += 1
+
     def save_model(self, model: torch.nn.Module, ckpt_path):
         if self.rank <= 0:
             torch.save(model.state_dict(), ckpt_path)
@@ -64,8 +67,7 @@ class Trainer(ABC):
         if is_dist():
             dist.barrier()
 
-    def load_model(self, model: torch.nn.Module, ckpt_name):
-        ckpt_path = os.path.join(self.args.ckpt_dir, ckpt_name)
+    def load_model(self, model: torch.nn.Module, ckpt_path):
         ckpt = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt, strict=False)
 
