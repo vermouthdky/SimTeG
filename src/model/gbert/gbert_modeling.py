@@ -26,6 +26,7 @@ class GBert(nn.Module):
         self.iter = iter
         self.hidden_size = args.hidden_size
         self.module_to_train = module_to_train
+        transformers_logging.set_verbosity_error()
 
         if module_to_train == "gnn":
             self.gnn_model = self._get_gnn_model(args)

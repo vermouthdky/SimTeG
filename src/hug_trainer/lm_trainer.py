@@ -5,6 +5,7 @@ import os.path as osp
 import shutil
 
 import evaluate
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -62,7 +63,7 @@ class InnerTrainer(HugTrainer):
             if x0 is not None:
                 should_compute_kl = True
 
-        if return_outputs:
+        if return_outputs or should_compute_kl:
             logits, hidden_features = model(**inputs, return_hidden=True)
         else:
             logits = model(**inputs, return_hidden=False)
@@ -75,8 +76,8 @@ class InnerTrainer(HugTrainer):
                 target=F.softmax(x0, dim=-1),
                 reduction="batchmean",
             )
-            kl_loss *= 2**self.args.kl_loss_temp
-            loss += self.args.kl_loss_weight * kl_loss
+            kl_loss = self.args.kl_loss_weight * kl_loss * (2**self.args.kl_loss_temp)
+            loss = loss + kl_loss
         return (loss, {"logits": logits, "hidden_features": hidden_features}) if return_outputs else loss
 
 
@@ -88,11 +89,8 @@ class TrainingArguments(HugTrainingArguments):
 
 
 class LMTrainer(Trainer):
-    def ckpt_path(self, iter, module: str):
-        ckpt_dir = osp.join(self.args.ckpt_dir, module)
-        if not osp.exists(ckpt_dir):
-            os.makedirs(ckpt_dir)
-        return osp.join(ckpt_dir, f"iter_{iter}_{module}.pt")
+    def ckpt_path(self, iter, stage="lm", module="lm"):
+        return osp.join(self.args.ckpt_dir, f"iter_{iter}_{stage}_{module}.pt")
 
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
@@ -113,7 +111,7 @@ class LMTrainer(Trainer):
         model_class = get_model_class(self.args.model_type, self.args.use_adapter)
         model = model_class(self.args, self.iter, "lm")
         if self.args.fix_gnn and self.iter > 0:
-            model.gnn_model.requries_grad_(False)
+            model.gnn_model.requires_grad_(False)
         return model
 
     def _compute_metrics(self, eval_pred):
@@ -172,6 +170,8 @@ class LMTrainer(Trainer):
         if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
             x_embs = emb_handler.load(x_embs_name)
             logits_embs = emb_handler.load(logits_name)
+            if isinstance(x_embs, np.ndarray):
+                x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
         else:
             eval_output = self.trainer.predict(dataset)
             logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
@@ -186,9 +186,9 @@ class LMTrainer(Trainer):
         dist.barrier()
         self.model = self._prepare_model()
         if iter > 0:
-            self.load_model(self.model.gnn_model, self.ckpt_path(iter - 1, "gnn"))
+            self.load_model(self.model.gnn_model, self.ckpt_path(iter - 1, "gnn", "gnn"))
             if self.args.inherit:
-                self.load_model(self.model.bert_model, self.ckpt_path(iter - 1, "lm"))
+                self.load_model(self.model.bert_model, self.ckpt_path(iter - 1, "lm", "lm"))
 
         self.train_set, self.valid_set = self._prepare_datset()
         self.trainer = self._prepare_trainer()
@@ -196,9 +196,9 @@ class LMTrainer(Trainer):
             self.trainer._hp_search_setup(self.trial)
 
         train_output = self.trainer.train()
-        self.save_model(self.model.bert_model, self.ckpt_path(iter, "lm"))
+        self.save_model(self.model.bert_model, self.ckpt_path(iter, "lm", "lm"))
         if iter > 0:
-            self.save_model(self.model.gnn_model, self.ckpt_path(iter, "gnn"))
+            self.save_model(self.model.gnn_model, self.ckpt_path(iter, "lm", "gnn"))
 
         global_step, train_dict = train_output.global_step, train_output.metrics
         train_dict["global_step"] = global_step

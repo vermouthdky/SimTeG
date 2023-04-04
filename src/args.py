@@ -34,6 +34,7 @@ def parse_args():
     # flag
     parser.add_argument("--disable_tqdm", action="store_true", default=False)
     parser.add_argument("--use_bert_x", action="store_true", default=False)
+    parser.add_argument("--debug", action="store_true", default=False, help="will use mini dataset")
     parser.add_argument("--use_adapter", action="store_true", default=False)
     parser.add_argument(
         "--use_SLE", action="store_true", default=False, help="whether to use self-label-enhancement (SLE)"

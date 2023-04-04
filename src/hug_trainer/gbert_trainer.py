@@ -5,6 +5,7 @@ import os.path as osp
 import shutil
 from typing import Union
 
+import optuna
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -35,8 +36,16 @@ class GBertTrainer:
             logger.info(f"use cached ckpt instead")
         else:
             trainer.train_once(iter)
+            # trainer.model = trainer._prepare_model()
+            # if iter > 0:
+            #     trainer.load_model(trainer.model.gnn_model, trainer.ckpt_path(iter - 1, "gnn"))
+            #     if trainer.args.inherit:
+            #         trainer.load_model(trainer.model.bert_model, trainer.ckpt_path(iter - 1, "lm"))
+
+            # trainer.train_set, trainer.valid_set = trainer._prepare_datset()
+            # trainer.trainer = trainer._prepare_trainer()
         trainer.all_set = trainer._get_dataset("all")
-        logger.info("iter: {iter}: start inference and evaluation")
+        logger.info(f"iter: {iter}: start inference and evaluation")
         hidden_features, results = trainer.inference_and_evaluate()
         return hidden_features, results
 
@@ -49,6 +58,13 @@ class GBertTrainer:
             logger.info(f"*************** Start LM training ***************")
             self.lm_trainer.update_data(self.data, self.split_idx)
             hidden_features, results = self.run_once(iter, self.lm_trainer)
+            self.lm_trainer.next_iter()
+            if self.trial is not None:
+                if results["valid_acc"] < self.args.expected_valid_acc or self.trial.should_prune():
+                    logger.critical(
+                        f"valid acc {results['valid_acc']:.4f} is lower than expected {self.args.expected_valid_acc:.4f}"
+                    )
+                    raise optuna.exceptions.TrialPruned()
 
             logger.info(f"propogating hidden features of {self.args.lm_type} on the graph")
             # preserve data.x for KL divergence loss
@@ -61,10 +77,11 @@ class GBertTrainer:
             gc.collect()
             torch.cuda.empty_cache()
 
-            logger.warning("*************** Start GNN training ***************")
+            logger.info("*************** Start GNN training ***************")
             self.gnn_trainer.update_data(self.data, self.split_idx)
             _, results = self.run_once(iter, self.gnn_trainer)
             valid_acc = results["valid_acc"]
+            self.gnn_trainer.next_iter()
 
             if valid_acc > best_valid_acc:
                 best_path = os.path.join(self.args.output_dir, "best", "ckpt")
@@ -77,6 +94,7 @@ class GBertTrainer:
             else:
                 best_count += 1
                 if best_count >= 2:
+                    logger.warning(f"early stop at iter {iter} with best valid acc {best_valid_acc:.4f}")
                     return best_valid_acc
 
         return best_valid_acc
