@@ -356,7 +356,8 @@ class JK_GAMLP_RLU(nn.Module):
         self.num_hops = num_hops
         self.pre_dropout = pre_dropout
         self.prelu = nn.PReLU()
-        self.res_fc = nn.Linear(nfeat, hidden, bias=False)
+        if residual:
+            self.res_fc = nn.Linear(nfeat, hidden, bias=False)
         if pre_process:
             self.lr_jk_ref = FeedForwardNetII(num_hops * hidden, hidden, hidden, n_layers_1, dropout, alpha, bns)
             self.lr_att = nn.Linear(hidden + hidden, 1)

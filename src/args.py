@@ -64,6 +64,7 @@ def parse_args():
     parser.add_argument("--scheduler_type", type=str, default="linear")
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
+    parser.add_argument("--lr_scheduler_type", type=str, default="linear", choices=["linear", "constant"])
     # parameters for kl loss
     parser.add_argument("--kl_loss_weight", type=float, default=1)
     parser.add_argument("--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp")
@@ -93,6 +94,9 @@ def parse_args():
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
     parser.add_argument("--n_trials", type=int, default=20)
     parser.add_argument("--load_study", action="store_true", default=False)
+
+    # other hyperparameters
+    parser.add_argument("--SLE_mode", type=str, default="gnn", choices=["gnn", "lm", "both"])
 
     args = parser.parse_args()
     args = _post_init(args)

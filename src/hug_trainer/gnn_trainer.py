@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, x_emb, x0, labels):
+    def __init__(self, x_emb, x0, y_emb, labels):
         super().__init__()
         self.data = {
             "x_emb": x_emb,
             "x0": x0,
+            "y_emb": y_emb,
             "labels": labels.view(-1, 1),
         }
 
@@ -68,7 +69,15 @@ class GNNTrainer(Trainer):
 
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
-        dataset = Dataset(x_emb=self.data.x_emb, x0=self.data.x, labels=self.data.y)
+        use_pesudo = self.args.use_SLE and mode == "train"
+        dataset = Dataset(
+            x_emb=self.data.x_emb,
+            x0=self.data.x,
+            y_emb=self.data.sle.y_emb if self.args.use_SLE else None,
+            labels=self.data.y if not use_pesudo else self.data.sle.pesudo_y,
+        )
+        if use_pesudo:
+            return torch.utils.data.Subset(dataset, self.data.sle.pesudo_train_idx)
         return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
     def _prepare_datset(self):
@@ -111,10 +120,11 @@ class GNNTrainer(Trainer):
             per_device_train_batch_size=self.args.gnn_batch_size,
             per_device_eval_batch_size=self.args.gnn_eval_batch_size,
             warmup_steps=warmup_steps,
+            lr_scheduler_type=self.args.lr_scheduler_type,
             disable_tqdm=False,
             num_train_epochs=self.args.gnn_epochs,
             local_rank=self.rank,
-            dataloader_num_workers=12,
+            dataloader_num_workers=1,
             ddp_find_unused_parameters=False,
         )
         return InnerTrainer(

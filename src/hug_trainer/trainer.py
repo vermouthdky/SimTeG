@@ -123,10 +123,9 @@ class Trainer(ABC):
         logits_embs, x_embs = self.inference(self.all_set, embs_path)
         results = self._evaluate(logits_embs, self.data.y)
         logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
-        del logits_embs
         gc.collect()
         torch.cuda.empty_cache()
-        return x_embs, results  # x_embs is None in GNNTrainer
+        return logits_embs, x_embs, results  # x_embs is None in GNNTrainer
 
     @abstractmethod
     def train_once(self, iter):

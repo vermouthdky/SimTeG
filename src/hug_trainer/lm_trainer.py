@@ -22,13 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, input_ids=None, attention_mask=None, x_emb=None, x0=None, labels=None):
+    def __init__(self, input_ids=None, attention_mask=None, x_emb=None, x0=None, y_emb=None, labels=None):
         super().__init__()
         self.data = {
             "input_ids": input_ids,
             "att_mask": attention_mask,
             "x_emb": x_emb,
             "x0": x0,
+            "y_emb": y_emb,
             "labels": labels.view(-1, 1),
         }
 
@@ -60,8 +61,7 @@ class InnerTrainer(HugTrainer):
         should_compute_kl = False
         if "x0" in inputs:
             x0 = inputs.pop("x0")
-            if x0 is not None:
-                should_compute_kl = True
+            should_compute_kl = True
 
         if return_outputs or should_compute_kl:
             logits, hidden_features = model(**inputs, return_hidden=True)
@@ -78,7 +78,10 @@ class InnerTrainer(HugTrainer):
             )
             kl_loss = self.args.kl_loss_weight * kl_loss * (2**self.args.kl_loss_temp)
             loss = loss + kl_loss
-        return (loss, {"logits": logits, "hidden_features": hidden_features}) if return_outputs else loss
+
+        if return_outputs:
+            outputs = {"logits": logits, "hidden_features": hidden_features}
+        return (loss, outputs) if return_outputs else loss
 
 
 class TrainingArguments(HugTrainingArguments):
@@ -95,13 +98,18 @@ class LMTrainer(Trainer):
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
         should_feed_x0 = self.iter > 0 and mode == "train" and self.args.compute_kl_loss
+        should_feed_y_emb = self.iter > 0 and self.args.use_SLE
+        use_pesudo = self.args.use_SLE and mode == "train" and self.iter > 0
         dataset = Dataset(
             self.data.input_ids,
             self.data.attention_mask,
             self.data.x_emb if self.iter > 0 else None,
             self.data.x if should_feed_x0 else None,
-            self.data.y,
+            self.data.sle.y_emb if should_feed_y_emb else None,
+            self.data.y if not use_pesudo else self.data.sle.pesudo_y,
         )
+        if use_pesudo:
+            return torch.utils.data.Subset(dataset, self.data.sle.pesudo_train_idx)
         return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
     def _prepare_datset(self):
@@ -146,10 +154,11 @@ class LMTrainer(Trainer):
             per_device_train_batch_size=self.args.batch_size,
             per_device_eval_batch_size=self.args.eval_batch_size,
             warmup_steps=warmup_steps,
+            lr_scheduler_type=self.args.lr_scheduler_type,
             disable_tqdm=False,
             num_train_epochs=self.args.epochs,
             local_rank=self.rank,
-            dataloader_num_workers=12,
+            dataloader_num_workers=1,
             ddp_find_unused_parameters=False,
             kl_loss_weight=self.args.kl_loss_weight,
             kl_loss_temp=self.args.kl_loss_temp,
