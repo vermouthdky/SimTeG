@@ -9,11 +9,22 @@ import torch
 import torch.distributed as dist
 
 
+def mkdirs_if_not_exists(path: str):
+    rank = int(os.environ["RANK"]) if is_dist() else -1
+    if rank <= 0:
+        if not os.path.exists(path):
+            os.makedirs(path)
+    if rank >= 0:
+        dist.barrier()
+
+
 class EmbeddingHandler:
     def __init__(self, emb_path: str):
         self.emb_path = emb_path
-        if not os.path.exists(self.emb_path):
+        rank = int(os.environ["RANK"]) if is_dist() else -1
+        if rank <= 0 and not os.path.exists(self.emb_path):
             os.makedirs(self.emb_path)
+        dist.barrier()
 
     def save(self, emb: torch.Tensor, saved_name: str):
         saved_name = os.path.join(self.emb_path, saved_name)

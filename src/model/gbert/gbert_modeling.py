@@ -25,6 +25,7 @@ class GBert(nn.Module):
         assert module_to_train in ["lm", "gnn"]
         self.iter = iter
         self.hidden_size = args.hidden_size
+        self.use_SLE = args.use_SLE
         self.module_to_train = module_to_train
         transformers_logging.set_verbosity_error()
 
@@ -93,6 +94,7 @@ class GBert(nn.Module):
 
     def gnn_foward(self, x_emb, y_emb):
         if y_emb is not None:
+            assert self.use_SLE
             return self.gnn_model(x_emb, y_emb)
         else:
             return self.gnn_model(x_emb)
