@@ -148,6 +148,7 @@ class LMTrainer(Trainer):
             weight_decay=self.args.weight_decay,
             load_best_model_at_end=True,
             metric_for_best_model="eval_accuracy",
+            dataloader_drop_last=True,
             gradient_accumulation_steps=self.args.accum_interval,
             label_smoothing_factor=self.args.label_smoothing,
             save_total_limit=1,

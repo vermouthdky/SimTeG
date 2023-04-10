@@ -33,17 +33,15 @@ class GBert_HP_search(HP_search):
     # the model related HPs should be consistent with the ones in LM_HP_search
     def setup_search_space(self, args, trial):
         args.epochs = trial.suggest_int("epochs", 1, 4)
-        args.lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
-        args.weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
-        args.label_smoothing = trial.suggest_float("label_smoothing", 0.1, 0.7)
-        args.accum_interval = trial.suggest_categorical("accum_interval", [1, 5, 10])
-        args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.7)
-        args.warmup_ratio = trial.suggest_float("warmup_ratio", 0.1, 0.5)
-        args.kl_loss_weight = trial.suggest_float("kl_loss_weight", 0.1, 1.0)
-        args.kl_loss_temp = trial.suggest_int("kl_loss_temp", 0, 4)
-        args.gnn_epochs = trial.suggest_int("gnn_epochs", 5, 50)
-        args.gnn_lalel_smoothing = trial.suggest_float("gnn_lalel_smoothing", 0.1, 0.7)
-        args.inherit = trial.suggest_categorical("inherit", [True, False])
-        args.compute_kl_loss = trial.suggest_categorical("compute_kl_loss", [True, False])
-        args.fix_gnn = trial.suggest_categorical("fix_gnn", [True, False])
+        args.gnn_epochs = trial.suggest_int("gnn_epochs", 20, 50)
+        args.lr_scheduler_type = trial.suggest_categorical("lr_scheduler", ["linear", "constant"])
+        args.gnn_inherit = trial.suggest_categorical("gnn_inherit", [True, False])
+        if args.lr_scheduler_type == "linear":
+            args.lr = 8e-4
+            args.gnn_lr = 1e-2
+        elif args.lr_scheduler_type == "constant":
+            args.lr = 5e-4
+            args.gnn_lr = 5e-3
+        args.SLE_threshold = trial.suggest_float("SLE_threshold", 0.5, 0.95)
+        args.SLE_mode = trial.suggest_categorical("SLE_mode", ["gnn", "lm", "both"])
         return args
