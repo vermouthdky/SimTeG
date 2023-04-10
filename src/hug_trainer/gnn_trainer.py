@@ -155,7 +155,7 @@ class GNNTrainer(Trainer):
         dist.barrier()
         self.model = self._prepare_model()
         # TODO: maybe we should not load the gnn model here
-        if iter > 0 and self.args.inherit:
+        if iter > 0 and self.args.inherit and self.args.gnn_inherit:
             self.load_model(self.model.gnn_model, self.ckpt_path(iter, "lm", "gnn"))
 
         self.train_set, self.valid_set = self._prepare_datset()

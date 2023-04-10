@@ -89,6 +89,7 @@ class GBertTrainer:
         self.gnn_trainer = GNNTrainer(args, data, split_idx, evaluator, **kwargs)
         self.edge_index_to_adj_t()
         self.sle = SLE(args, data, split_idx["train"])
+        self.data.sle = self.sle
 
     def edge_index_to_adj_t(self):
         self.data = ToSparseTensor()(self.data)
@@ -164,7 +165,7 @@ class GBertTrainer:
                 best_count = 0
             else:
                 best_count += 1
-                if best_count >= 2:
+                if best_count >= 3:  # patience 3 iterations
                     logger.warning(f"early stop at iter {iter} with best valid acc {best_valid_acc:.4f}")
                     return best_valid_acc
 

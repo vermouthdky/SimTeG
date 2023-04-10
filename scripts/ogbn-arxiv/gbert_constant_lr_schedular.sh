@@ -2,11 +2,12 @@ model_type='GBert'
 dataset='ogbn-arxiv'
 lm_type='Deberta'
 gnn_type='GAMLP'
-suffix=${lm_type}_${gnn_type}_constant_scheduler_gnn_epochs_100
+suffix=${lm_type}_${gnn_type}_constant_scheduler_gnn_epochs_100_fix_gnn
 
 # test lr scheduler: [linear, constant]
 # linear, lr: 8e-4, gnn_lr: 1e-2
 # constant, lr: 5e-4, gnn_lr: 5e-3
+# test_acc at iter 0: 0.7619
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --eval_interval 1 \
@@ -37,6 +38,8 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --gnn_dropout 0.15 \
     --gnn_label_smoothing 0.5 \
     --use_adapter \
+    --fix_gnn \
+    --gnn_inherit \
     --inherit \
     --compute_kl_loss \
     --lr_scheduler_type constant
