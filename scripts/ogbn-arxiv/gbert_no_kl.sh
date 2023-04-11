@@ -35,5 +35,4 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --fix_gnn \
     --gnn_inherit \
     --inherit \
-    --compute_kl_loss \
     --lr_scheduler_type constant

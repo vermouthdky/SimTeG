@@ -12,15 +12,14 @@ import torch.distributed as dist
 from ogb.io.read_graph_pyg import read_graph_pyg
 from ogb.utils.url import download_url, extract_zip
 from torch_geometric.data import InMemoryDataset
-from torch_geometric.transforms import ToSparseTensor
-from transformers import AutoTokenizer, BatchEncoding
+from transformers import AutoTokenizer
 
 from ..utils import is_dist
 
 logger = logging.getLogger(__name__)
 
 
-class OgbnArxivWithText(InMemoryDataset):
+class OgbnProductsWithText(InMemoryDataset):
     def __init__(
         self,
         root="data",
@@ -28,23 +27,23 @@ class OgbnArxivWithText(InMemoryDataset):
         pre_transform=None,
         tokenizer="microsoft/deberta-base",
     ):
-        self.name = "ogbn-arxiv"  ## original name, e.g., ogbn-proteins
+        self.name = "ogbn-products"  ## original name, e.g., ogbn-proteins
         self.dir_name = "_".join(self.name.split("-"))
         self.original_root = root
         self.root = osp.join(root, self.dir_name)
         self.meta = {
-            "download_name": "arxiv",
+            "download_name": "products",
             "num_tasks": 1,
             "task_type": "multiclass classification",
             "eval_metric": "acc",
-            "num_classes": 40,
+            "num_classes": 47,
             "is_hetero": False,
-            "add_inverse_edge": False,
-            "additional_node_files": ["node_year"],
+            "add_inverse_edge": True,
+            "additional_node_files": [],
             "additional_edge_files": [],
             "binary": False,
-            "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/arxiv.zip",
-            "text_url": "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz",
+            "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/products.zip",
+            "text_url": "https://drive.google.com/u/0/uc?id=1gsabsx8KR2N9jJz16jTcA0QASXsNuKnN&export=download",
             "tokenizer": tokenizer,
         }
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
@@ -59,7 +58,7 @@ class OgbnArxivWithText(InMemoryDataset):
             shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
         if rank in [0, -1]:
             self.save_metainfo()
-        super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
+        super(OgbnProductsWithText, self).__init__(self.root, transform, pre_transform)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     def get_idx_split(self):
@@ -98,9 +97,12 @@ class OgbnArxivWithText(InMemoryDataset):
         return osp.join("geometric_data_processed.pt")
 
     def download(self):
+        __import__("ipdb").set_trace()
         path = download_url(self.meta["graph_url"], self.original_root)
         extract_zip(path, self.original_root)
-        text_path = download_url(self.meta["text_url"], os.path.join(self.original_root, "arxiv/raw"))
+        text_path = download_url(
+            self.meta["text_url"], os.path.join(self.original_root, f"{self.meta['download_name']}/raw")
+        )
         os.unlink(path)
         shutil.rmtree(self.root)
         shutil.move(osp.join(self.original_root, self.meta["download_name"]), self.root)
@@ -139,6 +141,7 @@ class OgbnArxivWithText(InMemoryDataset):
         2. Tokenize title and abstract
         3. save the flag of tokenizer
         """
+        __import__("ipdb").set_trace()
         df = pd.read_csv(
             os.path.join(self.raw_dir, "titleabs.tsv.gz"),
             sep="\t",
@@ -181,7 +184,7 @@ class OgbnArxivWithText(InMemoryDataset):
 
 
 if __name__ == "__main__":
-    pyg_dataset = OgbnArxivWithText()
+    pyg_dataset = OgbnProductsWithText(root="../data")
     print(pyg_dataset[0])
     split_index = pyg_dataset.get_idx_split()
     print(split_index)

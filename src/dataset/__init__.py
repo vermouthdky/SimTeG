@@ -1,10 +1,8 @@
-from torch_geometric.transforms import Compose, ToSparseTensor, ToUndirected
-
 from .ogbn_arxiv import OgbnArxivWithText
+from .ogbn_products import OgbnProductsWithText
 
 
-def load_dataset(dataset, root="data", tokenizer="microsoft/deberta-base", lightning=False):
-    if dataset == "ogbn-arxiv":
-        return OgbnArxivWithText(root, tokenizer=tokenizer)
-    else:
-        raise NotImplementedError
+def load_dataset(dataset, root="data", tokenizer="microsoft/deberta-base"):
+    datasets = {"ogbn-arxiv": OgbnArxivWithText, "ogbn-products": OgbnProductsWithText}
+    assert dataset in datasets.keys()
+    return datasets[dataset](root=root, tokenizer=tokenizer)
