@@ -1,8 +1,8 @@
 model_type='GBert'
-dataset='ogbn-arxiv'
+dataset='ogbn-products'
 lm_type='Deberta'
 gnn_type='GAMLP'
-suffix=${lm_type}_${gnn_type}_main
+suffix=${lm_type}_${gnn_type}_test
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --eval_interval 1 \
@@ -22,7 +22,6 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --kl_loss_temp 1 \
     --epochs 2 \
     --warmup_ratio 0.15 \
-    --use_hug_trainer \
     --gnn_lr 5e-3 \
     --gnn_eval_interval 5 \
     --gnn_weight_decay 1e-7 \

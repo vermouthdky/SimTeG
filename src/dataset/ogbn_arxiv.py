@@ -13,7 +13,7 @@ from ogb.io.read_graph_pyg import read_graph_pyg
 from ogb.utils.url import download_url, extract_zip
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.transforms import ToSparseTensor
-from transformers import AutoTokenizer, BatchEncoding
+from transformers import AutoTokenizer
 
 from ..utils import is_dist
 
@@ -43,8 +43,8 @@ class OgbnArxivWithText(InMemoryDataset):
             "additional_node_files": ["node_year"],
             "additional_edge_files": [],
             "binary": False,
-            "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/arxiv.zip",
-            "text_url": "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz",
+            "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/products.zip",
+            "text_url": "https://drive.google.com/u/0/uc?id=1gsabsx8KR2N9jJz16jTcA0QASXsNuKnN&export=download",
             "tokenizer": tokenizer,
         }
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
@@ -55,8 +55,8 @@ class OgbnArxivWithText(InMemoryDataset):
 
         metainfo = self.load_metainfo()
         if metainfo is not None and metainfo["tokenizer"] != tokenizer:
-            logger.info("The tokenizer is changed. Re-processing the dataset.")
-            shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
+            logger.critical("The tokenizer is changed. Re-processing the dataset.")
+            shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
         if rank in [0, -1]:
             self.save_metainfo()
         super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
@@ -68,8 +68,8 @@ class OgbnArxivWithText(InMemoryDataset):
         path = osp.join(self.root, "split", split_type)
 
         # short-cut if split_dict.pt exists
-        if os.path.isfile(os.path.join(path, "split_dict.pt")):
-            return torch.load(os.path.join(path, "split_dict.pt"))
+        if osp.isfile(osp.join(path, "split_dict.pt")):
+            return torch.load(osp.join(path, "split_dict.pt"))
 
         train_idx = torch.from_numpy(
             pd.read_csv(osp.join(path, "train.csv.gz"), compression="gzip", header=None).values.T[0]
@@ -100,7 +100,7 @@ class OgbnArxivWithText(InMemoryDataset):
     def download(self):
         path = download_url(self.meta["graph_url"], self.original_root)
         extract_zip(path, self.original_root)
-        text_path = download_url(self.meta["text_url"], os.path.join(self.original_root, "arxiv/raw"))
+        text_path = download_url(self.meta["text_url"], osp.join(self.original_root, "arxiv/raw"))
         os.unlink(path)
         shutil.rmtree(self.root)
         shutil.move(osp.join(self.original_root, self.meta["download_name"]), self.root)
@@ -140,7 +140,7 @@ class OgbnArxivWithText(InMemoryDataset):
         3. save the flag of tokenizer
         """
         df = pd.read_csv(
-            os.path.join(self.raw_dir, "titleabs.tsv.gz"),
+            osp.join(self.raw_dir, "titleabs.tsv.gz"),
             sep="\t",
             names=["paper id", "title", "abstract"],
             header=None
@@ -149,7 +149,7 @@ class OgbnArxivWithText(InMemoryDataset):
         # Unzip the file `titleabs.tsv.gz` with gzip, otherwise it encounters the following bug if directly applying read csv
         # BUG: the first column's id is inplaced with 'titleabs.tsv'. Try to fix it manually
         df.iloc[0][0] = 200971
-        df_mapping = pd.read_csv(os.path.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
+        df_mapping = pd.read_csv(osp.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
         df["abstitle"] = df["title"] + ". " + df["abstract"]
         df = df.drop(columns=["title", "abstract"])
         df = df.astype({"paper id": np.int64, "abstitle": str})
@@ -163,13 +163,13 @@ class OgbnArxivWithText(InMemoryDataset):
         return text_encoding
 
     def save_metainfo(self):
-        w_path = os.path.join(self.root, "processed/meta_info.json")
+        w_path = osp.join(self.root, "processed/meta_info.json")
         with open(w_path, "w") as outfile:
             json.dump(self.meta, outfile)
 
     def load_metainfo(self):
-        r_path = os.path.join(self.root, "processed/meta_info.json")
-        if not os.path.exists(r_path):
+        r_path = osp.join(self.root, "processed/meta_info.json")
+        if not osp.exists(r_path):
             return None
         return json.loads(open(r_path).read())
         # with open(r_path, "r") as infile:

@@ -12,6 +12,7 @@ from ogb.nodeproppred import Evaluator
 from torch_geometric.utils import subgraph
 
 from .dataset import load_dataset
+from .trainer import get_trainer_class
 from .utils import dataset2foldername, is_dist
 
 logger = logging.getLogger(__name__)
@@ -26,16 +27,6 @@ def cleanup():
     torch.cuda.empty_cache()
     dist.destroy_process_group()
     gc.collect()
-
-
-def get_trainer_class(model_type, use_hug_trainer):
-    if use_hug_trainer:
-        logger.warning("using huggingface trainer!")
-        from .hug_trainer import get_trainer_class
-    else:
-        logger.warning("using self implemented trainer!")
-        from .trainer import get_trainer_class
-    return get_trainer_class(model_type)
 
 
 def load_data(args):
@@ -82,7 +73,7 @@ def train(args):
     if rank == 0:
         torch.distributed.barrier()
     # trainer
-    Trainer = get_trainer_class(args.model_type, args.use_hug_trainer)
+    Trainer = get_trainer_class(args.model_type)
     trainer = Trainer(args, data, split_idx, evaluator)
     trainer.train()
     del trainer, data, split_idx, evaluator

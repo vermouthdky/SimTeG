@@ -1,120 +1,219 @@
 import gc
 import logging
 import os
-import time
+import os.path as osp
+import shutil
 
+import evaluate
+import numpy as np
 import torch
 import torch.distributed as dist
-from torch import nn, optim
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, TensorDataset
-from torch.utils.data.distributed import DistributedSampler
+import torch.nn.functional as F
 from torch_geometric.transforms import SIGN
-from tqdm import tqdm
+from transformers import EarlyStoppingCallback
+from transformers import Trainer as HugTrainer
+from transformers import TrainingArguments as HugTrainingArguments
 
-from ..utils import dataset2foldername, is_dist
+from ..model import get_model_class
+from ..utils import EmbeddingHandler, is_dist
 from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
 
-class LM_Trainer(Trainer):
-    def __init__(self, args, data, split_idx, evaluator, **kwargs):
-        super(LM_Trainer, self).__init__(args, data, split_idx, evaluator, **kwargs)
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, input_ids=None, attention_mask=None, x_emb=None, x0=None, y_emb=None, labels=None):
+        super().__init__()
+        self.data = {
+            "input_ids": input_ids,
+            "att_mask": attention_mask,
+            "x_emb": x_emb,
+            "x0": x0,
+            "y_emb": y_emb,
+            "labels": labels.view(-1, 1),
+        }
 
-    def _get_train_loader(self):
-        data = self.data
-        train_idx = self.split_idx["train"]
-        y_train = data.y[train_idx].squeeze(-1)
-        input_ids, attention_mask = data.input_ids[train_idx], data.attention_mask[train_idx]
-        train_set = TensorDataset(input_ids, attention_mask, y_train)
-        return self._get_dataloader(train_set, self.args.batch_size, shuffle=True)
+    def __len__(self):
+        return self.data["labels"].size(0)
 
-    def _get_eval_loader(self, mode="test"):
-        data = self.data
-        assert mode in ["train", "valid", "test"]
-        eval_mask = self.split_idx[mode]
-        dataset = TensorDataset(data.input_ids[eval_mask], data.attention_mask[eval_mask], data.y[eval_mask])
-        return self._get_dataloader(dataset, self.args.eval_batch_size, shuffle=False)
+    def __getitem__(self, index):
+        if isinstance(index, torch.Tensor):
+            index = index.item()
+        batch_data = dict()
+        for key in self.data.keys():
+            if self.data[key] is not None:
+                batch_data[key] = self.data[key][index]
+        return batch_data
 
-    def train_once(self, iter=0):
-        self.optimizer = self._get_optimizer()
-        self.lr_scheduler = self._get_scheduler()
-        best_acc, best_count = 0.0, 0
-        for epoch in range(self.args.epochs):
-            self.train_loader.sampler.set_epoch(epoch)
-            loss = 0.0
-            t_start_epoch = time.time()
-            for step, batch_input in enumerate(
-                tqdm(self.train_loader, desc=f"Epoch {epoch + 1}", disable=self.disable_tqdm)
-            ):
-                batch_input = self._list_tensor_to_gpu(batch_input)
-                kwargs = {"step": step, "accum_interval": self.args.accum_interval, "len_batch": len(self.train_loader)}
-                batch_loss = self.training_step(*batch_input, **kwargs)
-                loss += batch_loss
-                dist.barrier()
-                t_end_epoch = time.time()
-                train_time_per_epoch = t_end_epoch - t_start_epoch
-                loss /= len(self.train_loader)
-            # evalutation and early stop
-            if (epoch + 1) % self.args.eval_interval == 0:
-                if self.args.save_ckpt_per_valid:
-                    ckpt_name = "{}_iter_{}_epoch_{}.pt".format(self.args.model_type, iter, epoch + 1)
-                    self.save_model(ckpt_name)
-                if self.args.eval_train_set:
-                    train_acc, train_loss, train_time = self.evaluate(mode="train")
-                else:
-                    train_acc, train_loss, train_time = -1, -1, -1
-                valid_acc, valid_loss, valid_time = self.evaluate(mode="valid")
-                result = {
-                    "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "train_acc": train_acc,
-                    "valid_loss": valid_loss,
-                    "valid_acc": valid_acc,
-                    "train_time_per_epoch": train_time_per_epoch,
-                    "inference_time_on_train_set": train_time,
-                    "inference_time_on_valid_set": valid_time,
-                }
-                logger.warning("".join("{}:{:.4f} ".format(k, v) for k, v in result.items()))
-                self._add_result(f"iter_{iter}_epoch_{epoch+1}", result)
-                if self.args.optuna and self.trial is not None:
-                    self.trial.report(valid_acc, epoch + 1)
-                    # if not iterative pruning, prune it if necessary
-                    # else we do pruning in the outer loop
-                    if iter == -1 and self.trial.should_prune():
-                        raise optuna.exceptions.TrialPruned()
-                # record loss and accs
-                # explictly early stop
-                if valid_acc > best_acc:
-                    ckpt_name = "{}_iter_{}_best.pt".format(self.args.model_type, iter)
-                    self.save_model(ckpt_name)
-                    best_acc = valid_acc
-                    best_count = 0
-                else:
-                    best_count += 1
-                    if best_count >= 2:
-                        return best_acc
-        return best_acc  # best valid acc
 
-    def save_bert_x(self, data):
+class InnerTrainer(HugTrainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
         """
-        save bert features to disk, used after training
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+        Subclass and override for custom behavior.
+        NOTE: add KL divergence here
         """
-        dataset = TensorDataset(data.input_ids, data.attention_mask)
-        dataloader = DataLoader(
-            dataset, batch_size=self.args.eval_batch_size, shuffle=False, num_workers=24, pin_memory=True
+        if "labels" in inputs:
+            labels = inputs.pop("labels")
+        else:
+            labels = None
+
+        should_compute_kl = False
+        if "x0" in inputs:
+            x0 = inputs.pop("x0")
+            should_compute_kl = True
+
+        if return_outputs or should_compute_kl:
+            logits, hidden_features = model(**inputs, return_hidden=True)
+        else:
+            logits = model(**inputs, return_hidden=False)
+
+        loss_op = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing_factor, reduce="mean")
+        loss = loss_op(logits, labels.view(-1))
+        if should_compute_kl:
+            kl_loss = F.kl_div(
+                input=F.log_softmax(hidden_features, dim=-1),
+                target=F.softmax(x0, dim=-1),
+                reduction="batchmean",
+            )
+            kl_loss = self.args.kl_loss_weight * kl_loss * (2**self.args.kl_loss_temp)
+            loss = loss + kl_loss
+
+        if return_outputs:
+            outputs = {"logits": logits, "hidden_features": hidden_features}
+        return (loss, outputs) if return_outputs else loss
+
+
+class TrainingArguments(HugTrainingArguments):
+    def __init__(self, *args, **kwargs):
+        self.kl_loss_weight = kwargs.pop("kl_loss_weight", 1.0)
+        self.kl_loss_temp = kwargs.pop("kl_loss_temp", 0.0)
+        super().__init__(*args, **kwargs)
+
+
+class LMTrainer(Trainer):
+    def ckpt_path(self, iter, stage="lm", module="lm"):
+        return osp.join(self.args.ckpt_dir, f"iter_{iter}_{stage}_{module}.pt")
+
+    def _get_dataset(self, mode):
+        assert mode in ["train", "valid", "test", "all"]
+        should_feed_x0 = self.iter > 0 and mode == "train" and self.args.compute_kl_loss
+        should_feed_y_emb = self.iter > 0 and self.args.use_SLE
+        use_pesudo = self.args.use_SLE and mode == "train" and self.iter > 0
+        dataset = Dataset(
+            self.data.input_ids,
+            self.data.attention_mask,
+            self.data.x_emb if self.iter > 0 else None,
+            self.data.x if should_feed_x0 else None,
+            self.data.sle.y_emb if should_feed_y_emb else None,
+            self.data.y if not use_pesudo else self.data.sle.pesudo_y,
         )
-        bert_x_list = []
-        for i, batch in enumerate(tqdm(dataloader, desc="saving bert featurs", disable=self.args.disable_tqdm)):
-            input_ids, att_mask = batch
-            with torch.no_grad():
-                _, bert_x = self.model(input_ids.to(self.rank), att_mask.to(self.rank), return_hidden=True)
-            bert_x_list.append(bert_x.to("cpu"))
-        bert_x = torch.concat(bert_x_list, dim=0)
-        saved_dir = os.path.join(self.args.data_folder, dataset2foldername(self.args.dataset), "processed", "bert_x.pt")
-        torch.save(bert_x, saved_dir)
-        del dataloader, bert_x, bert_x_list
-        gc.collect()
-        logger.info("save bert features {} to: {}".format(bert_x.shape, saved_dir))
+        if use_pesudo:
+            return torch.utils.data.Subset(dataset, self.data.sle.pesudo_train_idx)
+        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
+    def _prepare_datset(self):
+        return self._get_dataset("train"), self._get_dataset("valid")
+
+    def _prepare_model(self):
+        model_class = get_model_class(self.args.model_type, self.args.use_adapter)
+        model = model_class(self.args, self.iter, "lm")
+        if self.args.fix_gnn and self.iter > 0:
+            model.gnn_model.requires_grad_(False)
+        return model
+
+    def _compute_metrics(self, eval_pred):
+        metric = evaluate.load("accuracy")
+        logits, labels = eval_pred
+        if isinstance(logits, tuple):
+            logits = logits[0]
+        predictions = logits.argmax(-1)
+        return metric.compute(predictions=predictions, references=labels)
+
+    def _prepare_trainer(self):
+        # prepare training args
+        total_batch_size = self.world_size * self.args.batch_size * self.args.accum_interval
+        eval_steps = self.args.eval_patience // total_batch_size
+        train_steps = len(self.train_set) // total_batch_size + 1
+        warmup_steps = self.args.warmup_ratio * train_steps
+        training_args = TrainingArguments(
+            output_dir=self.args.output_dir,
+            optim="adamw_torch",
+            evaluation_strategy="steps",
+            eval_steps=eval_steps,
+            save_strategy="steps",
+            save_steps=eval_steps,
+            # eval_accumulation_steps=10,
+            learning_rate=self.args.lr,
+            weight_decay=self.args.weight_decay,
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_accuracy",
+            dataloader_drop_last=True,
+            gradient_accumulation_steps=self.args.accum_interval,
+            label_smoothing_factor=self.args.label_smoothing,
+            save_total_limit=1,
+            per_device_train_batch_size=self.args.batch_size,
+            per_device_eval_batch_size=self.args.eval_batch_size,
+            warmup_steps=warmup_steps,
+            lr_scheduler_type=self.args.lr_scheduler_type,
+            disable_tqdm=False,
+            num_train_epochs=self.args.epochs,
+            local_rank=self.rank,
+            dataloader_num_workers=1,
+            ddp_find_unused_parameters=False,
+            kl_loss_weight=self.args.kl_loss_weight,
+            kl_loss_temp=self.args.kl_loss_temp,
+        )
+        return InnerTrainer(
+            model=self.model,
+            args=training_args,
+            train_dataset=self.train_set,
+            eval_dataset=self.valid_set,
+            compute_metrics=self._compute_metrics,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+        )
+
+    def inference(self, dataset, embs_path):
+        x_embs_name = f"iter_{self.iter}_x_embs.pt"
+        logits_name = f"iter_{self.iter}_lm_logits.pt"
+        emb_handler = EmbeddingHandler(embs_path)
+        if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
+            x_embs = emb_handler.load(x_embs_name)
+            logits_embs = emb_handler.load(logits_name)
+            if isinstance(x_embs, np.ndarray):
+                x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
+        else:
+            eval_output = self.trainer.predict(dataset)
+            logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
+            logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
+            emb_handler.save(x_embs, x_embs_name)
+            emb_handler.save(logits_embs, logits_name)
+            logger.info(f"save the logits of {self.args.lm_type} to {osp.join(embs_path, logits_name)}")
+            logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
+        return logits_embs, x_embs
+
+    def train_once(self, iter):
+        dist.barrier()
+        self.model = self._prepare_model()
+        if iter > 0:
+            self.load_model(self.model.gnn_model, self.ckpt_path(iter - 1, "gnn", "gnn"))
+            if self.args.inherit:
+                self.load_model(self.model.bert_model, self.ckpt_path(iter - 1, "lm", "lm"))
+
+        self.train_set, self.valid_set = self._prepare_datset()
+        self.trainer = self._prepare_trainer()
+        if self.trial is not None:
+            self.trainer._hp_search_setup(self.trial)
+
+        train_output = self.trainer.train()
+        self.save_model(self.model.bert_model, self.ckpt_path(iter, "lm", "lm"))
+        if iter > 0:
+            self.save_model(self.model.gnn_model, self.ckpt_path(iter, "lm", "gnn"))
+
+        global_step, train_dict = train_output.global_step, train_output.metrics
+        train_dict["global_step"] = global_step
+        self.trainer.save_metrics("train", train_dict)
+        # print train_dict
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
+        gc.collect()
+        torch.cuda.empty_cache()
