@@ -112,14 +112,17 @@ class LMTrainer(Trainer):
             return torch.utils.data.Subset(dataset, self.data.sle.pesudo_train_idx)
         return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
-    def _prepare_datset(self):
+    def _prepare_dataset(self):
         return self._get_dataset("train"), self._get_dataset("valid")
 
     def _prepare_model(self):
         model_class = get_model_class(self.args.model_type, self.args.use_adapter)
-        model = model_class(self.args, self.iter, "lm")
-        if self.args.fix_gnn and self.iter > 0:
-            model.gnn_model.requires_grad_(False)
+        if self.args.model_type == "GBert":
+            model = model_class(self.args, self.iter, "lm")
+            if self.args.fix_gnn and self.iter > 0:
+                model.gnn_model.requires_grad_(False)
+        else:
+            model = model_class(self.args)
         return model
 
     def _compute_metrics(self, eval_pred):
@@ -159,7 +162,7 @@ class LMTrainer(Trainer):
             disable_tqdm=False,
             num_train_epochs=self.args.epochs,
             local_rank=self.rank,
-            dataloader_num_workers=1,
+            dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
             kl_loss_weight=self.args.kl_loss_weight,
             kl_loss_temp=self.args.kl_loss_temp,
@@ -200,7 +203,7 @@ class LMTrainer(Trainer):
             if self.args.inherit:
                 self.load_model(self.model.bert_model, self.ckpt_path(iter - 1, "lm", "lm"))
 
-        self.train_set, self.valid_set = self._prepare_datset()
+        self.train_set, self.valid_set = self._prepare_dataset()
         self.trainer = self._prepare_trainer()
         if self.trial is not None:
             self.trainer._hp_search_setup(self.trial)

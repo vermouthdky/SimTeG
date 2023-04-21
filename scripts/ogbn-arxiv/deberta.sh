@@ -1,35 +1,47 @@
 dataset='ogbn-arxiv'
 model_type='Deberta'
-suffix='main'
+suffix='main' # adapter
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
-    --eval_patience 50000 \
-    --lr 4e-5 \
-    --weight_decay 4e-6 \
+    --lr 5e-4 \
+    --weight_decay 1e-4 \
     --batch_size 20 \
     --eval_batch_size 200 \
+    --accum_interval 1 \
+    --hidden_dropout_prob 0.20 \
+    --header_dropout_prob 0.12 \
+    --label_smoothing 0.32 \
+    --adapter_hidden_size 32 \
     --epochs 10 \
-    --accum_interval 5 \
-    --hidden_dropout_prob 0.19 \
-    --header_dropout_prob 0.16 \
-    --attention_dropout_prob 0.18 \
-    --label_smoothing 0.2 \
-    --warmup_ratio 0.1 \
-    --use_hug_trainer
+    --warmup_ratio 0.15 \
+    --use_adapter \
+    --lr_scheduler_type constant
 
-suffix='reproduce_GLEM'
-
+suffix='full-tune'
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
-    --eval_interval 1 \
-    --lr 2e-5 \
-    --weight_decay 4e-6 \
+    --lr 5e-4 \
+    --weight_decay 1e-4 \
     --batch_size 20 \
     --eval_batch_size 200 \
-    --epochs 5 \
-    --accum_interval 5 \
-    --hidden_dropout_prob 0.3 \
-    --header_dropout_prob 0.4 \
-    --attention_dropout_prob 0.1 \
-    --label_smoothing 0.3 \
-    --warmup_ratio 0.6 \
-    --use_hug_trainer
+    --accum_interval 1 \
+    --hidden_dropout_prob 0.20 \
+    --header_dropout_prob 0.12 \
+    --label_smoothing 0.32 \
+    --epochs 10 \
+    --warmup_ratio 0.15 \
+    --lr_scheduler_type constant
+
+suffix='full-tune-default-config'
+bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
+    --lr 5e-4 \
+    --weight_decay 1e-4 \
+    --batch_size 20 \
+    --eval_batch_size 200 \
+    --accum_interval 1 \
+    --hidden_dropout_prob 0.20 \
+    --header_dropout_prob 0.12 \
+    --label_smoothing 0.32 \
+    --epochs 10 \
+    --warmup_ratio 0.15 \
+    --lr_scheduler_type constant \
+    --use_default_config

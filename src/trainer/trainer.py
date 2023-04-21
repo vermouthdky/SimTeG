@@ -138,16 +138,14 @@ class Trainer(ABC):
         self.trainer = self._prepare_trainer()
         iter = self.iter = 0
 
-        ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0")
-        if self.args.use_cache and os.path.exists(ckpt_path):
-            logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
-        else:
-            valid_acc = self.train_once(iter)
-            logger.critical("Iter {} Best valid acc: {:.4f}".format(iter, valid_acc))
-
-        logger.warning(f"\n*************** Start iter {iter} testing ***************\n")
+        # ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0")
+        # if self.args.use_cache and os.path.exists(ckpt_path):
+        #     logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+        # else:
+        self.train_once(iter)
+        logger.warning(f"\n*************** Start inference and testing ***************\n")
         # NOTE inference for SLE and propogation
-        _, results = self.inference_and_evaluate()
+        _, _, results = self.inference_and_evaluate()
 
         valid_acc = results["valid_acc"]
         gc.collect()

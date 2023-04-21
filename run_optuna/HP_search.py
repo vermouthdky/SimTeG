@@ -41,7 +41,7 @@ class HP_search(ABC):
     def train(self, args, trial=None):
         data, split_idx, evaluator, processed_dir = load_data(args)
         # trainer
-        Trainer = get_trainer_class(args.model_type, args.use_hug_trainer)
+        Trainer = get_trainer_class(args.model_type)
         trainer = Trainer(args, data, split_idx, evaluator, trial=trial)
         best_acc = trainer.train()
         del trainer, data, split_idx, evaluator

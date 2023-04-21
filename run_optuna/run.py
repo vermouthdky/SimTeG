@@ -5,7 +5,7 @@ import sys
 import warnings
 
 from optuna.exceptions import ExperimentalWarning
-from search_space import GBert_HP_search, LM_HP_search
+from search_space import GBert_HP_search, GNN_HP_search, LM_HP_search
 
 from src.args import parse_args
 from src.utils import set_logging
@@ -21,6 +21,8 @@ def get_search_instance(model_type):
         return LM_HP_search
     elif model_type in ["GBert"]:
         return GBert_HP_search
+    elif model_type in ["GAMLP", "SAGN"]:
+        return GNN_HP_search
     else:
         raise NotImplementedError("not implemented HP search class")
 

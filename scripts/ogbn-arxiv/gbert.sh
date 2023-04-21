@@ -6,11 +6,9 @@ suffix=${lm_type}_${gnn_type}_main
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --eval_interval 1 \
-    --num_iterations 8 \
+    --num_iterations 1 \
     --lr 5e-4 \
-    --gnn_lr 1e-2 \
     --weight_decay 1e-4 \
-    --gnn_weight_decay 2e-6 \
     --batch_size 20 \
     --eval_batch_size 200 \
     --accum_interval 1 \
@@ -20,9 +18,8 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --adapter_hidden_size 32 \
     --kl_loss_weight 2.0 \
     --kl_loss_temp 1 \
-    --epochs 2 \
+    --epochs $lm_epochs \
     --warmup_ratio 0.15 \
-    --use_hug_trainer \
     --gnn_lr 5e-3 \
     --gnn_eval_interval 5 \
     --gnn_weight_decay 1e-7 \
@@ -32,8 +29,8 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --gnn_dropout 0.15 \
     --gnn_label_smoothing 0.5 \
     --use_adapter \
-    --fix_gnn \
     --gnn_inherit \
     --inherit \
     --compute_kl_loss \
-    --lr_scheduler_type constant
+    --lr_scheduler_type constant \
+    --use_cache

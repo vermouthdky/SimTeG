@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
     parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
+    parser.add_argument("--bert_x_dir", type=str, help="used when use_bert_x is True")
 
     # dataset and fixed model args
     parser.add_argument("--num_labels", type=int)
@@ -47,6 +48,7 @@ def parse_args():
     parser.add_argument("--gnn_inherit", action="store_true", default=False)
     parser.add_argument("--fix_gnn", action="store_true", default=False, help="fix gnn model when finetuning bert")
     parser.add_argument("--compute_kl_loss", action="store_true", default=False)
+    parser.add_argument("--use_default_config", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -61,10 +63,9 @@ def parse_args():
     parser.add_argument("--adapter_hidden_size", type=int, default=768)
     parser.add_argument("--label_smoothing", type=float, default=0.3)
     parser.add_argument("--warmup_ratio", type=float, default=0.6)
-    parser.add_argument("--scheduler_type", type=str, default="linear")
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
-    parser.add_argument("--lr_scheduler_type", type=str, default="linear", choices=["linear", "constant"])
+    parser.add_argument("--lr_scheduler_type", type=str, default="constant", choices=["linear", "constant"])
     # parameters for kl loss
     parser.add_argument("--kl_loss_weight", type=float, default=1)
     parser.add_argument("--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp")
@@ -73,6 +74,7 @@ def parse_args():
     parser.add_argument("--SLE_threshold", type=float, default=0.9)
     parser.add_argument("--eval_interval", type=int, default=5)
     parser.add_argument("--eval_patience", type=int, default=50000)
+    parser.add_argument("--SLE_mode", type=str, default="both", choices=["gnn", "lm", "both"])
 
     # module hyperparameters
     parser.add_argument("--lm_type", type=str, default="Deberta")
@@ -89,6 +91,7 @@ def parse_args():
     parser.add_argument("--gnn_batch_size", type=int, default=10000)
     parser.add_argument("--gnn_eval_batch_size", type=int, default=10000)
     parser.add_argument("--gnn_epochs", type=int, default=500)
+    parser.add_argument("--gnn_warmup_ratio", type=float, default=0.25)
 
     # optuna hyperparameters
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
@@ -96,8 +99,12 @@ def parse_args():
     parser.add_argument("--load_study", action="store_true", default=False)
 
     # other hyperparameters
-    parser.add_argument("--SLE_mode", type=str, default="gnn", choices=["gnn", "lm", "both"])
-
+    parser.add_argument(
+        "--train_mode",
+        type=str,
+        default="both",
+        help="both: train lm and gnn in each iteration; lm: only train lm in each iteration and train GNN in iter 0",
+    )
     args = parser.parse_args()
     args = _post_init(args)
     return args
@@ -148,8 +155,8 @@ def _set_pretrained_repo(args):
 def _set_dataset_specific_args(args):
     if args.dataset == "ogbn-arxiv":
         args.num_labels = 40
-        args.num_feats = 768 if args.use_bert_x else 128
-        if args.model_type == "GBert":
+        args.num_feats = 128
+        if args.model_type == "GBert" or args.use_bert_x:
             args.num_feats = 768
         args.hidden_size = 768
         args.expected_valid_acc = 0.6
@@ -157,7 +164,10 @@ def _set_dataset_specific_args(args):
     elif args.dataset == "ogbn-products":
         args.num_labels = 47
         args.num_feats = 100
+        if args.model_type == "GBert" or args.use_bert_x:
+            args.num_feats = 768
         args.hidden_size = 768
+        args.expected_valid_acc = 0.8
 
     return args
 

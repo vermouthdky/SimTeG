@@ -12,6 +12,17 @@ warnings.filterwarnings("ignore", category=ExperimentalWarning, module="optuna.m
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
+class GNN_HP_search(HP_search):
+    def setup_search_space(self, args, trial):
+        args.gnn_lr = trial.suggest_float("gnn_lr", 1e-5, 1e-2, log=True)
+        args.gnn_weight_decay = trial.suggest_float("gnn_weight_decay", 1e-7, 1e-4, log=True)
+        args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
+        args.gnn_label_smoothing = trial.suggest_float("gnn_label_smoothing", 0.1, 0.7)
+        args.lr_scheduler_type = trial.suggest_categorical("lr_scheduler_type", ["linear", "constant"])
+        args.gnn_warmup_ratio = trial.suggest_float("gnn_warmup_ratio", 0.1, 0.5)
+        return args
+
+
 class LM_HP_search(HP_search):
     def setup_search_space(self, args, trial):
         args.epochs = trial.suggest_int("epochs", 4, 10)

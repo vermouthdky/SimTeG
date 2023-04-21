@@ -6,13 +6,13 @@ suffix=optuna_${lm_type}_${gnn_type}_sle
 
 # default search hps, some may be changes as in search space
 bash run_optuna/scripts/run.sh --model_type $model_type --dataset $dataset --suffix $suffix \
+    --batch_size 20 \
     --eval_interval 1 \
     --num_iterations 8 \
     --lr 8e-4 \
     --gnn_lr 1e-2 \
     --weight_decay 1e-4 \
     --gnn_weight_decay 2e-6 \
-    --batch_size 20 \
     --eval_batch_size 200 \
     --accum_interval 1 \
     --hidden_dropout_prob 0.15 \
