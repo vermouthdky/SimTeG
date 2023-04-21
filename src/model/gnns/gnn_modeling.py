@@ -12,8 +12,8 @@ class SAGN(nn.Module):
         self.gnn_model = PureSAGN(args)
         self.dim_feats = args.num_feats
 
-    def forward(self, xs: torch.Tensor):
-        # TODO: modify the SAGN file
+    def forward(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None):
+        xs = torch.cat([x0, x_emb], dim=-1)
         return self.gnn_model(xs)
 
 
@@ -23,7 +23,8 @@ class SIGN(nn.Module):
         self.gnn_model = PureSIGN(args, num_hops=args.gnn_num_layers + 1)
         self.dim_feats = args.num_feats
 
-    def forward(self, xs: torch.Tensor):
+    def forward(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None):
+        xs = torch.cat([x0, x_emb], dim=-1)
         return self.gnn_model(xs)
 
 
@@ -33,5 +34,6 @@ class GAMLP(nn.Module):
         self.gnn_model = PureGAMLP(args)
         self.dim_feats = args.num_feats
 
-    def forward(self, xs: torch.Tensor):
+    def forward(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None):
+        xs = torch.cat([x0, x_emb], dim=-1)
         return self.gnn_model(xs)

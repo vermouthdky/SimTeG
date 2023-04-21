@@ -1,3 +1,4 @@
+import gc
 import gzip
 import json
 import logging
@@ -5,6 +6,7 @@ import os
 import os.path as osp
 import shutil
 
+import gdown
 import numpy as np
 import pandas as pd
 import torch
@@ -12,9 +14,10 @@ import torch.distributed as dist
 from ogb.io.read_graph_pyg import read_graph_pyg
 from ogb.utils.url import download_url, extract_zip
 from torch_geometric.data import InMemoryDataset
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from ..utils import is_dist
+from ..utils import is_dist, mkdirs_if_not_exists
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ class OgbnProductsWithText(InMemoryDataset):
         self.dir_name = "_".join(self.name.split("-"))
         self.original_root = root
         self.root = osp.join(root, self.dir_name)
+        mkdirs_if_not_exists(self.root)
         self.meta = {
             "download_name": "products",
             "num_tasks": 1,
@@ -48,21 +52,18 @@ class OgbnProductsWithText(InMemoryDataset):
         }
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
         # check if the dataset is already processed with the same tokenizer
-        rank = -1
-        if is_dist():
-            rank = int(os.environ["RANK"])
-
+        rank = int(os.environ["RANK"]) if is_dist() else -1
         metainfo = self.load_metainfo()
         if metainfo is not None and metainfo["tokenizer"] != tokenizer:
             logger.info("The tokenizer is changed. Re-processing the dataset.")
             shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
+        super(OgbnProductsWithText, self).__init__(self.root, transform, pre_transform)
         if rank in [0, -1]:
             self.save_metainfo()
-        super(OgbnProductsWithText, self).__init__(self.root, transform, pre_transform)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     def get_idx_split(self):
-        split_type = "time"
+        split_type = "sales_ranking"
 
         path = osp.join(self.root, "split", split_type)
 
@@ -97,12 +98,17 @@ class OgbnProductsWithText(InMemoryDataset):
         return osp.join("geometric_data_processed.pt")
 
     def download(self):
-        __import__("ipdb").set_trace()
         path = download_url(self.meta["graph_url"], self.original_root)
         extract_zip(path, self.original_root)
-        text_path = download_url(
-            self.meta["text_url"], os.path.join(self.original_root, f"{self.meta['download_name']}/raw")
-        )
+        # download text data Amazon-3M
+        output = osp.join(self.original_root, f"{self.meta['download_name']}/raw/Amazon-3M.raw.zip")
+        if osp.exists(output) and osp.getsize(output) > 0:  # pragma: no cover
+            logger.info(f"Using exist file {output}")
+        else:
+            gdown.download(url=self.meta["text_url"], output=output, quiet=False, fuzzy=False)
+            extract_zip(output, osp.join(self.original_root, f"{self.meta['download_name']}/raw"))
+            os.remove(output)
+
         os.unlink(path)
         shutil.rmtree(self.root)
         shutil.move(osp.join(self.original_root, self.meta["download_name"]), self.root)
@@ -129,11 +135,11 @@ class OgbnProductsWithText(InMemoryDataset):
             data.y = torch.from_numpy(node_label).to(torch.long)
 
         data = data if self.pre_transform is None else self.pre_transform(data)
-        text_encoding = self._mapping_and_tokenizing()
-        data.input_ids = text_encoding.input_ids
-        data.attention_mask = text_encoding.attention_mask
+        data.input_ids, data.attention_mask = self._mapping_and_tokenizing()
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
+        del data
+        gc.collect()
 
     def _mapping_and_tokenizing(self):
         """
@@ -141,43 +147,84 @@ class OgbnProductsWithText(InMemoryDataset):
         2. Tokenize title and abstract
         3. save the flag of tokenizer
         """
-        __import__("ipdb").set_trace()
-        df = pd.read_csv(
-            os.path.join(self.raw_dir, "titleabs.tsv.gz"),
-            sep="\t",
-            names=["paper id", "title", "abstract"],
-            header=None
-            # dtype={"paper id": np.int64, "title": str, "abstract": str},
-        ).dropna()
-        # Unzip the file `titleabs.tsv.gz` with gzip, otherwise it encounters the following bug if directly applying read csv
-        # BUG: the first column's id is inplaced with 'titleabs.tsv'. Try to fix it manually
-        df.iloc[0][0] = 200971
-        df_mapping = pd.read_csv(os.path.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
-        df["abstitle"] = df["title"] + ". " + df["abstract"]
-        df = df.drop(columns=["title", "abstract"])
-        df = df.astype({"paper id": np.int64, "abstitle": str})
-        df = df_mapping.merge(df, how="inner", on="paper id")
-        text_encoding = self.tokenizer(
-            df["abstitle"].values.tolist(),
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-        )
-        return text_encoding
+        text_dir = osp.join(self.raw_dir, "Amazon-3M.raw")
+        df = self._read_meta_product(text_dir)  # 二维表
+        df.replace(np.nan, "", inplace=True)
+        df["titlecontent"] = df["title"] + ". " + df["content"]
+        df = df.drop(columns=["title", "content"])
+        df.rename(columns={"uid": "asin"}, inplace=True)
+
+        df_mapping = pd.read_csv(os.path.join(self.root, "mapping/nodeidx2asin.csv.gz"))
+        df = df_mapping.merge(df, how="left", on="asin")
+        text_list = df["titlecontent"].values.tolist()
+        input_ids, attention_mask, truncated_size = [], [], 10000
+        print("Tokenizing...")
+        for i in tqdm(range(0, len(df), truncated_size)):
+            j = min(len(text_list), i + truncated_size)
+            _encodings = self.tokenizer(text_list[i:j], padding=True, truncation=True, return_tensors="pt")
+            input_ids.append(_encodings.input_ids)
+            attention_mask.append(_encodings.attention_mask)
+        input_ids, attention_mask = torch.cat(input_ids, dim=0), torch.cat(attention_mask, dim=0)
+        return input_ids, attention_mask
+
+    def _read_product_json(self, raw_text_path):
+        # modified from https://github.com/AndyJZhao/GLEM/blob/main/src/utils/data/preprocess_product.py
+        if not osp.exists(osp.join(raw_text_path, "trn.json")):
+            trn_json = osp.join(raw_text_path, "trn.json.gz")
+            trn_json = gzip.GzipFile(trn_json)
+            open(osp.join(raw_text_path, "trn.json"), "wb+").write(trn_json.read())
+            os.unlink(osp.join(raw_text_path, "trn.json.gz"))
+            tst_json = osp.join(raw_text_path, "tst.json.gz")
+            tst_json = gzip.GzipFile(tst_json)
+            open(osp.join(raw_text_path, "tst.json"), "wb+").write(tst_json.read())
+            os.unlink(osp.join(raw_text_path, "tst.json.gz"))
+            os.unlink(osp.join(raw_text_path, "Yf.txt"))  # New
+
+        i = 1
+        for file in ["trn.json", "tst.json"]:
+            file_path = osp.join(raw_text_path, file)
+            print(f"transfering {file_path}")
+            with open(file_path, "r") as file_in:
+                title = []
+                for line in file_in.readlines():
+                    dic = json.loads(line)
+
+                    dic["title"] = dic["title"].strip('"\n')
+                    title.append(dic)
+                name_attribute = ["uid", "title", "content"]
+                writercsv = pd.DataFrame(columns=name_attribute, data=title)
+                writercsv.to_csv(
+                    osp.join(raw_text_path, f"product" + str(i) + ".csv"), index=False, encoding="utf_8_sig"
+                )  # index=False不输出索引值
+                i = i + 1
+
+    def _read_meta_product(self, raw_text_path):
+        # copied from https://github.com/AndyJZhao/GLEM/blob/main/src/utils/data/preprocess_product.py
+        # 针对read_meta_data
+        if not osp.exists(osp.join(raw_text_path, f"products.csv")):
+            self._read_product_json(raw_text_path)  # 弄出json文件
+            path_product1 = osp.join(raw_text_path, f"product1.csv")
+            path_product2 = osp.join(raw_text_path, f"product2.csv")
+            pro1 = pd.read_csv(path_product1)
+            pro2 = pd.read_csv(path_product2)
+            file = pd.concat([pro1, pro2])
+            file.drop_duplicates()
+            file.to_csv(osp.join(raw_text_path, f"products.csv"), index=False, sep=" ")
+        else:
+            file = pd.read_csv(osp.join(raw_text_path, "products.csv"), sep=" ")
+
+        return file
 
     def save_metainfo(self):
-        w_path = os.path.join(self.root, "processed/meta_info.json")
+        w_path = osp.join(self.root, "processed/meta_info.json")
         with open(w_path, "w") as outfile:
             json.dump(self.meta, outfile)
 
     def load_metainfo(self):
-        r_path = os.path.join(self.root, "processed/meta_info.json")
-        if not os.path.exists(r_path):
+        r_path = osp.join(self.root, "processed/meta_info.json")
+        if not osp.exists(r_path):
             return None
         return json.loads(open(r_path).read())
-        # with open(r_path, "r") as infile:
-        #     json_obj = json.load(infile)
-        # return json_obj
 
     def __repr__(self):
         return "{}()".format(self.__class__.__name__)

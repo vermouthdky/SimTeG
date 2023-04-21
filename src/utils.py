@@ -66,7 +66,7 @@ def set_logging():
         root.handlers.clear()
 
     root.setLevel(logging.INFO)
-    log_format = "%(message)s"
+    log_format = "[%(name)s %(asctime)s] %(message)s"
     color_format = "%(log_color)s" + log_format
 
     console_handler = logging.StreamHandler(sys.stdout)

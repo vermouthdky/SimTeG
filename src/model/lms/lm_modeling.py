@@ -22,6 +22,7 @@ transformers_logging.set_verbosity_error()
 class Roberta(nn.Module):
     def __init__(self, args):
         super(Roberta, self).__init__()
+        transformers_logging.set_verbosity_error()
         config = RobertaConfig.from_pretrained("roberta-base")
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
@@ -44,6 +45,7 @@ class Roberta(nn.Module):
 class Deberta(nn.Module):
     def __init__(self, args):
         super(Deberta, self).__init__()
+        transformers_logging.set_verbosity_error()
         pretrained_repo = "microsoft/deberta-base"
         config = DebertaConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
@@ -67,13 +69,15 @@ class Deberta(nn.Module):
 class AdapterDeberta(nn.Module):
     def __init__(self, args):
         super(AdapterDeberta, self).__init__()
+        transformers_logging.set_verbosity_error()
         pretrained_repo = "microsoft/deberta-base"
         config = DebertaConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
-        config.header_dropout_prob = args.header_dropout_prob
-        config.hidden_dropout_prob = args.hidden_dropout_prob
-        config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.adapter_hidden_size = args.adapter_hidden_size
+        if not args.use_default_config:
+            config.header_dropout_prob = args.header_dropout_prob
+            config.hidden_dropout_prob = args.hidden_dropout_prob
+            config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = AdapterDebertaModel.from_pretrained(pretrained_repo, config=config)
@@ -105,6 +109,7 @@ class AdapterDeberta(nn.Module):
 class AdapterRoberta(nn.Module):
     def __init__(self, args):
         super(AdapterRoberta, self).__init__()
+        transformers_logging.set_verbosity_error()
         config = RobertaConfig.from_pretrained("roberta-base")
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob

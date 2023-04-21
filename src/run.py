@@ -43,10 +43,11 @@ def load_data(args):
         data = transform(data)
     # if use bert_x, change it
     if args.use_bert_x:
-        saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
-        bert_x = torch.load(saved_dir)
+        # saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
+        bert_x = torch.load(args.bert_x_dir)
+        assert bert_x.size(0) == data.x.size(0)
+        logger.warning(f"using bert x loaded from {args.bert_x_dir}")
         data.x = bert_x
-        logger.warning("using bert_x instead of original features!!!")
     evaluator = Evaluator(name=args.dataset)
     gc.collect()
 

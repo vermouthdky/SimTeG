@@ -43,8 +43,8 @@ class OgbnArxivWithText(InMemoryDataset):
             "additional_node_files": ["node_year"],
             "additional_edge_files": [],
             "binary": False,
-            "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/products.zip",
-            "text_url": "https://drive.google.com/u/0/uc?id=1gsabsx8KR2N9jJz16jTcA0QASXsNuKnN&export=download",
+            "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/arxiv.zip",
+            "text_url": "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz",
             "tokenizer": tokenizer,
         }
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
@@ -57,9 +57,9 @@ class OgbnArxivWithText(InMemoryDataset):
         if metainfo is not None and metainfo["tokenizer"] != tokenizer:
             logger.critical("The tokenizer is changed. Re-processing the dataset.")
             shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
+        super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
         if rank in [0, -1]:
             self.save_metainfo()
-        super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     def get_idx_split(self):
@@ -150,7 +150,7 @@ class OgbnArxivWithText(InMemoryDataset):
         # BUG: the first column's id is inplaced with 'titleabs.tsv'. Try to fix it manually
         df.iloc[0][0] = 200971
         df_mapping = pd.read_csv(osp.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
-        df["abstitle"] = df["title"] + ". " + df["abstract"]
+        df["abstitle"] = "title: " + df["title"] + ". " + "abstract: " + df["abstract"]
         df = df.drop(columns=["title", "abstract"])
         df = df.astype({"paper id": np.int64, "abstitle": str})
         df = df_mapping.merge(df, how="inner", on="paper id")

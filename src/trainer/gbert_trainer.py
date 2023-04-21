@@ -1,16 +1,18 @@
 import gc
 import logging
+import os
 import os.path as osp
 import shutil
-from typing import Union
+from typing import List, Union
 
 import optuna
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch_geometric.transforms import ToSparseTensor
+from tqdm import tqdm
 
-from ..utils import mkdirs_if_not_exists
+from ..utils import is_dist, mkdirs_if_not_exists
 from .gnn_trainer import GNNTrainer
 from .lm_trainer import LMTrainer
 
@@ -72,7 +74,7 @@ class SLE:
         self.pesudo_train_mask = SLE_mask | self.pesudo_train_mask
         self.pesudo_y[SLE_mask] = SLE_pred
         self.pesudo_y[self.train_mask] = self.y_true[self.train_mask]
-        logger.info("Update pseudo labels, rate: {:.4f}".format(self.pesudo_label_rate))
+        logger.warning("Update pseudo labels, rate: {:.4f}".format(self.pesudo_label_rate))
         self.y_emb = self.compute_y_emb()
 
 
@@ -99,14 +101,38 @@ class GBertTrainer:
     def run_once(self, iter, trainer: Union[GNNTrainer, LMTrainer]):
         # "lm" only affects lm_trainer, this value does not take effect for gnn_trainer
         # see gnn_trainer.py for implementation
-        # ckpt_path = trainer.ckpt_path(iter, "lm")
-        # if self.args.use_cache and osp.exists(ckpt_path):
-        #     logger.info(f"use cached ckpt instead")
-        # else:
-        trainer.train_once(iter)
+        ckpt_path = trainer.ckpt_path(iter, "lm", "lm")
+        is_lm_trainer = isinstance(trainer, LMTrainer)
+        if self.args.use_cache and is_lm_trainer and osp.exists(ckpt_path):
+            trainer.model = trainer._prepare_model()
+            trainer.train_set, trainer.valid_set = trainer._prepare_dataset()
+            trainer.trainer = trainer._prepare_trainer()
+            logger.info(f"use cached ckpt instead")
+        else:
+            trainer.train_once(iter)
         trainer.all_set = trainer._get_dataset("all")
         logger.info(f"iter: {iter}: start inference and evaluation")
         return trainer.inference_and_evaluate()
+
+    def concat(self, xs: List[torch.Tensor]):
+        gc.collect()
+        num_nodes = xs[0].size(0)
+        chunk_size = 100000
+        num_chunks = num_nodes // chunk_size + 1
+        concat_feats = torch.empty((0, 768 * len(xs)))
+        disable_tqdm = self.args.disable_tqdm or (is_dist() and int(os.environ["RANK"]) > 0)
+        for i in tqdm(range(num_chunks), disable=disable_tqdm):
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, num_nodes)
+            chunk = torch.cat([x[start_idx:end_idx, :] for x in xs], dim=-1)
+            concat_feats = torch.cat([concat_feats, chunk], dim=0)
+        logger.info(f"concat feats shape: {concat_feats.shape}")
+        gc.collect()
+        # if int(os.environ["RANK"]) == 0:
+        #     __import__("ipdb").set_trace()
+        # else:
+        #     dist.barrier()
+        return concat_feats
 
     def train(self):
         best_valid_acc = 0.0
@@ -132,12 +158,17 @@ class GBertTrainer:
 
             # hidden features propogation using self.data.adj_t
             xs = [self.data.x]
-            for i in range(1, num_layers + 1):
+            disable_tqdm = self.args.disable_tqdm or (is_dist() and int(os.environ["RANK"]) > 0)
+            logger.info("propogating features")
+            for i in tqdm(range(1, num_layers + 1), disable=disable_tqdm):
                 xs += [self.data.adj_t @ xs[-1]]
             xs = xs[1:]  # remove the hop-0 feature, which is saved in self.data.x
             self.data.x_emb = torch.cat(xs, dim=-1)
+            # self.data.x_emb = self.concat(xs)
+            logger.info("finished processing")
 
             if self.args.use_SLE and self.args.SLE_mode in ["both", "lm"]:
+                logger.info("updating SLE")
                 self.sle.update(logits)
                 self.data.sle = self.sle
 
