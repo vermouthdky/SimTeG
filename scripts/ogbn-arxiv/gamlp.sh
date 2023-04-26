@@ -1,22 +1,20 @@
-dataset='ogbn-arxiv'
-model_type='GAMLP'
-suffix='bert_x_JK_GAMLP'
-
-# training parameters
-# searched by optuna, valid acc: 70.30 %
-# with the same HPs, test on bert_x, valid_acc ~76%
-
-#! --use_bert_x
+dataset=ogbn-arxiv
+model_type=GAMLP
+lm_type=all-MiniLM-L6-v2
+suffix=main
+bert_x_dir=out/ogbn-arxiv/all-MiniLM-L6-v1/main/cached_embs/iter_0_x_embs.pt
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
-    --eval_interval 5 \
-    --lr 0.01 \
-    --weight_decay 1e-7 \
-    --batch_size 10000 \
-    --eval_batch_size 10000 \
-    --epochs 500 \
-    --accum_interval 1 \
-    --gnn_dropout 0.15 \
-    --label_smoothing 0.5 \
-    --warmup_ratio 0.3 \
-    --use_bert_x
+    --lm_type $lm_type \
+    --gnn_lr 1e-2 \
+    --gnn_eval_interval 5 \
+    --gnn_weight_decay 2e-4 \
+    --gnn_batch_size 10000 \
+    --gnn_eval_batch_size 10000 \
+    --gnn_epochs 100 \
+    --gnn_dropout 0.7 \
+    --gnn_num_layers 4 \
+    --lr_scheduler_type linear \
+    --gnn_label_smoothing 0.2 \
+    --use_bert_x \
+    --bert_x_dir $bert_x_dir

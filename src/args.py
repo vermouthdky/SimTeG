@@ -3,6 +3,8 @@ import json
 import logging
 import os
 
+import torch
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,7 +19,7 @@ def parse_args():
     parser.add_argument("--suffix", type=str, default="main")
 
     # parameters for data and model storage
-    parser.add_argument("--data_folder", type=str, default="../data")
+    parser.add_argument("--data_folder", type=str, default="../textual_ogb")
     parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--model_type", type=str, default="GBert")
     parser.add_argument("--output_dir", type=str)  # output dir
@@ -65,7 +67,7 @@ def parse_args():
     parser.add_argument("--warmup_ratio", type=float, default=0.6)
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
-    parser.add_argument("--lr_scheduler_type", type=str, default="constant", choices=["linear", "constant"])
+    parser.add_argument("--lr_scheduler_type", type=str, default="linear", choices=["linear", "constant"])
     # parameters for kl loss
     parser.add_argument("--kl_loss_weight", type=float, default=1)
     parser.add_argument("--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp")
@@ -92,6 +94,7 @@ def parse_args():
     parser.add_argument("--gnn_eval_batch_size", type=int, default=10000)
     parser.add_argument("--gnn_epochs", type=int, default=500)
     parser.add_argument("--gnn_warmup_ratio", type=float, default=0.25)
+    parser.add_argument("--gnn_lr_scheduler_type", type=str, default="constant", choices=["constant", "linear"])
 
     # optuna hyperparameters
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
@@ -131,7 +134,7 @@ def _post_init(args):
 
 
 def _set_lm_and_gnn_type(args):
-    if args.model_type in ["Deberta", "Roberta"]:
+    if args.model_type in ["Deberta", "DebertaV3", "Roberta"]:
         args.lm_type = args.model_type
     elif args.model_type in ["GAMLP", "SAGN", "SIGN"]:
         args.gnn_type = args.model_type
@@ -140,15 +143,16 @@ def _set_lm_and_gnn_type(args):
 
 def _set_pretrained_repo(args):
     dict = {
-        "Deberta": "microsoft/deberta-base",
-        "Roberta": "roberta-base",
-        "GBert": "microsoft/deberta-base",
+        "Deberta": ["microsoft/deberta-base", "microsoft/deberta-large"],
+        "DebertaV3": ["microsoft/deberta-v3-base", "microsoft/deberta-v3-large"],
+        "Roberta": ["roberta-base", "roberta-large"],
+        "all-roberta-large-v1": ["sentence-transformers/all-roberta-large-v1"],
+        "all-mpnet-base-v2": ["sentence-transformers/all-mpnet-base-v2"],
+        "all-MiniLM-L6-v2": ["sentence-transformers/all-MiniLM-L6-v2"],
     }
 
     if args.model_type in dict.keys():
-        args.pretrained_repo = dict[args.model_type]
-    else:  # does not take effect
-        args.pretrained_repo = "microsoft/deberta-base"
+        assert args.pretrained_repo in dict[args.model_type]
     return args
 
 
@@ -156,18 +160,26 @@ def _set_dataset_specific_args(args):
     if args.dataset == "ogbn-arxiv":
         args.num_labels = 40
         args.num_feats = 128
-        if args.model_type == "GBert" or args.use_bert_x:
-            args.num_feats = 768
-        args.hidden_size = 768
         args.expected_valid_acc = 0.6
 
     elif args.dataset == "ogbn-products":
         args.num_labels = 47
         args.num_feats = 100
-        if args.model_type == "GBert" or args.use_bert_x:
-            args.num_feats = 768
-        args.hidden_size = 768
         args.expected_valid_acc = 0.8
+
+    hidden_size_dict = {
+        "Deberta": 768,
+        "DebertaV3": 768,
+        "Roberta": 768,
+        "all-roberta-large-v1": 1024,
+        "all-mpnet-base-v2": 768,
+        "all-MiniLM-L6-v2": 384,
+    }
+
+    if args.model_type in hidden_size_dict.keys():
+        args.hidden_size = hidden_size_dict[args.model_type]
+    elif args.lm_type in hidden_size_dict.keys():
+        args.num_feats = args.hidden_size = hidden_size_dict[args.lm_type]
 
     return args
 

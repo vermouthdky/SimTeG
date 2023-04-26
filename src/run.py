@@ -30,10 +30,12 @@ def cleanup():
 
 
 def load_data(args):
+    tokenize = args.model_type not in ["GAMLP", "SAGN", "SIGN"]
     dataset = load_dataset(
         args.dataset,
         root=args.data_folder,
         tokenizer=args.pretrained_repo,
+        tokenize=tokenize,
     )
     split_idx = dataset.get_idx_split()
     data = dataset.data

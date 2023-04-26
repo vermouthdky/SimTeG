@@ -124,7 +124,7 @@ class GNNTrainer(Trainer):
             per_device_train_batch_size=self.args.gnn_batch_size,
             per_device_eval_batch_size=self.args.gnn_eval_batch_size,
             warmup_steps=warmup_steps,
-            lr_scheduler_type=self.args.lr_scheduler_type,
+            lr_scheduler_type=self.args.gnn_lr_scheduler_type,
             disable_tqdm=False,
             num_train_epochs=self.args.gnn_epochs,
             local_rank=self.rank,

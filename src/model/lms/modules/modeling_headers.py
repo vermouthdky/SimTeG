@@ -4,6 +4,25 @@ from torch import nn
 from .modeling_adapter_deberta import ContextPooler, StableDropout
 
 
+class SentenceTransformerClsHead(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        classifier_dropout = (
+            config.header_dropout_prob if config.header_dropout_prob is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
+
+    def forward(self, feature):
+        x = self.dropout(feature)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+
 class DebertaClassificationHead(nn.Module):
     def __init__(self, config):
         super().__init__()

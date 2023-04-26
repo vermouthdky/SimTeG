@@ -2,16 +2,28 @@ import logging
 import os
 
 import torch
+import torch.nn.functional as F
+from peft import LoraConfig, TaskType, get_peft_config, get_peft_model
 from torch import nn
-from transformers import DebertaConfig, RobertaConfig, RobertaModel
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    DebertaConfig,
+    DebertaModel,
+    DebertaV2Config,
+    DebertaV2Model,
+    RobertaConfig,
+    RobertaModel,
+)
 from transformers import logging as transformers_logging  # AutoConfig,; AutoModel,
 
 from .modules import (
     AdapterDebertaModel,
+    AdapterDebertaV2Model,
     AdapterRobertaModel,
     DebertaClassificationHead,
-    DebertaModel,
     RobertaClassificationHead,
+    SentenceTransformerClsHead,
 )
 
 logger = logging.getLogger(__name__)
@@ -19,19 +31,101 @@ logger = logging.getLogger(__name__)
 transformers_logging.set_verbosity_error()
 
 
-class Roberta(nn.Module):
+def mean_pooling(model_output, attention_mask):
+    token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+
+class Sentence_Transformer(nn.Module):
     def __init__(self, args):
-        super(Roberta, self).__init__()
+        super(Sentence_Transformer, self).__init__()
         transformers_logging.set_verbosity_error()
-        config = RobertaConfig.from_pretrained("roberta-base")
+        pretrained_repo = args.pretrained_repo
+        logger.warning(f"inherit model weights from {pretrained_repo}")
+        config = AutoConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
+        config.header_dropout_prob = args.header_dropout_prob
+        config.save_pretrained(save_directory=args.output_dir)
+        # init modules
+        self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config, add_pooling_layer=False)
+        self.head = SentenceTransformerClsHead(config)
+        if args.use_adapter:
+            lora_config = LoraConfig(
+                task_type=TaskType.SEQ_CLS, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
+            )
+            self.bert_model = get_peft_model(self.bert_model, lora_config)
+            self.bert_model.print_trainable_parameters()
+
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
+        bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
+        sentence_embeddings = mean_pooling(bert_out, att_mask)
+        out = self.head(sentence_embeddings)
+
+        if return_hidden:
+            sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+            return out, sentence_embeddings
+        else:
+            return out
+
+
+class DebertaV3(nn.Module):
+    def __init__(self, args):
+        super(DebertaV3, self).__init__()
+        transformers_logging.set_verbosity_error()
+        pretrained_repo = args.pretrained_repo
+        assert pretrained_repo in ["microsoft/deberta-v3-base", "microsoft/deberta-v3-large"]
+        config = DebertaV2Config.from_pretrained(pretrained_repo)
+        config.num_labels = args.num_labels
+        config.header_dropout_prob = args.header_dropout_prob
+        if not args.use_default_config:
+            config.hidden_dropout_prob = args.hidden_dropout_prob
+            config.attention_probs_dropout_prob = args.attention_dropout_prob
+        else:
+            logger.warning("Using default config")
+        config.save_pretrained(save_directory=args.output_dir)
+        # init modules
+        self.bert_model = DebertaV2Model.from_pretrained(pretrained_repo, config=config)
+        self.head = DebertaClassificationHead(config)
+
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
+        bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
+        out = self.head(bert_out[0])
+        if return_hidden:
+            return out, bert_out[0][:, 0, :]
+        else:
+            return out
+
+
+class AdapterDebertaV3(nn.Module):
+    def __init__(self, args):
+        super(AdapterDebertaV3, self).__init__()
+        transformers_logging.set_verbosity_error()
+        pretrained_repo = args.pretrained_repo
+        assert pretrained_repo in ["microsoft/deberta-v3-base", "microsoft/deberta-v3-large"]
+        config = DebertaV2Config.from_pretrained(pretrained_repo)
+        config.num_labels = args.num_labels
+        config.adapter_hidden_size = args.adapter_hidden_size
         config.header_dropout_prob = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob
         config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
-        self.bert_model = RobertaModel.from_pretrained("roberta-base", config=config, add_pooling_layer=False)
-        self.head = RobertaClassificationHead(config)
+        self.bert_model = DebertaV2Model.from_pretrained(pretrained_repo, config=config)
+        self.head = DebertaClassificationHead(config)
+        is_correct = self._check_if_adapter_is_correct()
+        if not is_correct:
+            raise ValueError("Adapter is not correctly initialized!")
+        else:
+            logger.warning("Adapter is correctly initialized!")
+
+    def _check_if_adapter_is_correct(self):
+        for name, param in self.bert_model.named_parameters():
+            if param.requires_grad and "adapter" not in name:
+                return False
+            elif not param.requires_grad and "adapter" in name:
+                return False
+        return True
 
     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
@@ -46,12 +140,16 @@ class Deberta(nn.Module):
     def __init__(self, args):
         super(Deberta, self).__init__()
         transformers_logging.set_verbosity_error()
-        pretrained_repo = "microsoft/deberta-base"
+        pretrained_repo = args.pretrained_repo
+        assert pretrained_repo in ["microsoft/deberta-base", "microsoft/deberta-large"]
         config = DebertaConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
-        config.hidden_dropout_prob = args.hidden_dropout_prob
-        config.attention_probs_dropout_prob = args.attention_dropout_prob
+        if not args.use_default_config:
+            config.hidden_dropout_prob = args.hidden_dropout_prob
+            config.attention_probs_dropout_prob = args.attention_dropout_prob
+        else:
+            logger.warning("Using default config")
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = DebertaModel.from_pretrained(pretrained_repo, config=config)
@@ -70,14 +168,14 @@ class AdapterDeberta(nn.Module):
     def __init__(self, args):
         super(AdapterDeberta, self).__init__()
         transformers_logging.set_verbosity_error()
-        pretrained_repo = "microsoft/deberta-base"
+        pretrained_repo = args.pretrained_repo
+        assert pretrained_repo in ["microsoft/deberta-base", "microsoft/deberta-large"]
         config = DebertaConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.adapter_hidden_size = args.adapter_hidden_size
-        if not args.use_default_config:
-            config.header_dropout_prob = args.header_dropout_prob
-            config.hidden_dropout_prob = args.hidden_dropout_prob
-            config.attention_probs_dropout_prob = args.attention_dropout_prob
+        config.header_dropout_prob = args.header_dropout_prob
+        config.hidden_dropout_prob = args.hidden_dropout_prob
+        config.attention_probs_dropout_prob = args.attention_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = AdapterDebertaModel.from_pretrained(pretrained_repo, config=config)
@@ -106,11 +204,34 @@ class AdapterDeberta(nn.Module):
             return out
 
 
+class Roberta(nn.Module):
+    def __init__(self, args):
+        super(Roberta, self).__init__()
+        transformers_logging.set_verbosity_error()
+        config = RobertaConfig.from_pretrained(args.pretrained_repo)
+        config.num_labels = args.num_labels
+        config.header_dropout_prob = args.header_dropout_prob
+        config.hidden_dropout_prob = args.hidden_dropout_prob
+        config.attention_probs_dropout_prob = args.attention_dropout_prob
+        config.save_pretrained(save_directory=args.output_dir)
+        # init modules
+        self.bert_model = RobertaModel.from_pretrained(args.pretrained_repo, config=config, add_pooling_layer=False)
+        self.head = RobertaClassificationHead(config)
+
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
+        bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
+        out = self.head(bert_out[0])
+        if return_hidden:
+            return out, bert_out[0][:, 0, :]
+        else:
+            return out
+
+
 class AdapterRoberta(nn.Module):
     def __init__(self, args):
         super(AdapterRoberta, self).__init__()
         transformers_logging.set_verbosity_error()
-        config = RobertaConfig.from_pretrained("roberta-base")
+        config = RobertaConfig.from_pretrained(args.pretrained_repo)
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
         config.hidden_dropout_prob = args.hidden_dropout_prob
@@ -118,7 +239,9 @@ class AdapterRoberta(nn.Module):
         config.adapter_hidden_size = args.adapter_hidden_size
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
-        self.bert_model = AdapterRobertaModel.from_pretrained("roberta-base", config=config, add_pooling_layer=False)
+        self.bert_model = AdapterRobertaModel.from_pretrained(
+            args.pretrained_repo, config=config, add_pooling_layer=False
+        )
         self.head = RobertaClassificationHead(config)
 
     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):

@@ -1,12 +1,17 @@
 from .modeling_adapter_deberta import AdapterDebertaModel
+from .modeling_adapter_deberta_v3 import AdapterDebertaV2Model
 from .modeling_adapter_roberta import AdapterRobertaModel
-from .modeling_deberta import DebertaModel
-from .modeling_headers import DebertaClassificationHead, RobertaClassificationHead
+from .modeling_headers import (
+    DebertaClassificationHead,
+    RobertaClassificationHead,
+    SentenceTransformerClsHead,
+)
 
 __all__ = [
     "AdapterDebertaModel",
     "AdapterRobertaModel",
     "DebertaClassificationHead",
     "RobertaClassificationHead",
-    "DebertaModel"
+    "AdapterDebertaV2Model",
+    "SentenceTransformerClsHead",
 ]

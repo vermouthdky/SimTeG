@@ -24,11 +24,7 @@ logger = logging.getLogger(__name__)
 
 class OgbnProductsWithText(InMemoryDataset):
     def __init__(
-        self,
-        root="data",
-        transform=None,
-        pre_transform=None,
-        tokenizer="microsoft/deberta-base",
+        self, root="data", transform=None, pre_transform=None, tokenizer="microsoft/deberta-base", tokenize=True
     ):
         self.name = "ogbn-products"  ## original name, e.g., ogbn-proteins
         self.dir_name = "_".join(self.name.split("-"))
@@ -50,15 +46,16 @@ class OgbnProductsWithText(InMemoryDataset):
             "text_url": "https://drive.google.com/u/0/uc?id=1gsabsx8KR2N9jJz16jTcA0QASXsNuKnN&export=download",
             "tokenizer": tokenizer,
         }
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
+        self.should_tokenize = tokenize
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True) if tokenize else None
         # check if the dataset is already processed with the same tokenizer
         rank = int(os.environ["RANK"]) if is_dist() else -1
         metainfo = self.load_metainfo()
-        if metainfo is not None and metainfo["tokenizer"] != tokenizer:
+        if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
             logger.info("The tokenizer is changed. Re-processing the dataset.")
             shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
         super(OgbnProductsWithText, self).__init__(self.root, transform, pre_transform)
-        if rank in [0, -1]:
+        if rank in [0, -1] and tokenize:
             self.save_metainfo()
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -135,7 +132,8 @@ class OgbnProductsWithText(InMemoryDataset):
             data.y = torch.from_numpy(node_label).to(torch.long)
 
         data = data if self.pre_transform is None else self.pre_transform(data)
-        data.input_ids, data.attention_mask = self._mapping_and_tokenizing()
+        if self.should_tokenize:
+            data.input_ids, data.attention_mask = self._mapping_and_tokenizing()
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
         del data

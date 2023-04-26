@@ -27,6 +27,7 @@ class OgbnArxivWithText(InMemoryDataset):
         transform=None,
         pre_transform=None,
         tokenizer="microsoft/deberta-base",
+        tokenize=True,
     ):
         self.name = "ogbn-arxiv"  ## original name, e.g., ogbn-proteins
         self.dir_name = "_".join(self.name.split("-"))
@@ -47,18 +48,19 @@ class OgbnArxivWithText(InMemoryDataset):
             "text_url": "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz",
             "tokenizer": tokenizer,
         }
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True)
+        self.should_tokenize = tokenize
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True) if tokenize else None
         # check if the dataset is already processed with the same tokenizer
         rank = -1
         if is_dist():
             rank = int(os.environ["RANK"])
 
         metainfo = self.load_metainfo()
-        if metainfo is not None and metainfo["tokenizer"] != tokenizer:
+        if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
             logger.critical("The tokenizer is changed. Re-processing the dataset.")
             shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
         super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
-        if rank in [0, -1]:
+        if rank in [0, -1] and tokenize:
             self.save_metainfo()
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -127,9 +129,10 @@ class OgbnArxivWithText(InMemoryDataset):
             data.y = torch.from_numpy(node_label).to(torch.long)
 
         data = data if self.pre_transform is None else self.pre_transform(data)
-        text_encoding = self._mapping_and_tokenizing()
-        data.input_ids = text_encoding.input_ids
-        data.attention_mask = text_encoding.attention_mask
+        if self.should_tokenize:
+            text_encoding = self._mapping_and_tokenizing()
+            data.input_ids = text_encoding.input_ids
+            data.attention_mask = text_encoding.attention_mask
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
 
