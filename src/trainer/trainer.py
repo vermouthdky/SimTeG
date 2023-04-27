@@ -142,7 +142,9 @@ class Trainer(ABC):
         # if self.args.use_cache and os.path.exists(ckpt_path):
         #     logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
         # else:
-        self.train_once(iter)
+        assert self.args.mode in ["train", "test"]
+        if self.args.mode == "train":
+            self.train_once(iter)
         logger.warning(f"\n*************** Start inference and testing ***************\n")
         # NOTE inference for SLE and propogation
         _, _, results = self.inference_and_evaluate()

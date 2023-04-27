@@ -5,9 +5,9 @@ import sys
 import warnings
 
 from optuna.exceptions import ExperimentalWarning
-from search_space import GBert_HP_search, GNN_HP_search, LM_HP_search
 
 from src.args import parse_args
+from src.run_optuna.search_space import GBert_HP_search, GNN_HP_search, LM_HP_search
 from src.utils import set_logging
 
 logger = logging.getLogger(__name__)

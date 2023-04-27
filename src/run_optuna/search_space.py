@@ -3,8 +3,9 @@ import os
 import warnings
 
 import torch
-from HP_search import HP_search
 from optuna.exceptions import ExperimentalWarning
+
+from .HP_search import HP_search
 
 logger = logging.getLogger(__name__)
 # optuna.logging.set_verbosity(optuna.logging.ERROR)
@@ -18,8 +19,8 @@ class GNN_HP_search(HP_search):
         args.gnn_weight_decay = trial.suggest_float("gnn_weight_decay", 1e-7, 1e-4, log=True)
         args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
         args.gnn_label_smoothing = trial.suggest_float("gnn_label_smoothing", 0.1, 0.7)
-        args.lr_scheduler_type = trial.suggest_categorical("lr_scheduler_type", ["linear", "constant"])
         args.gnn_warmup_ratio = trial.suggest_float("gnn_warmup_ratio", 0.1, 0.5)
+        args.gnn_num_layers = trial.suggest_int("gnn_num_layers", 4, 8)
         return args
 
 

@@ -37,14 +37,14 @@ def main(args):
     set_logging()
     logger.info(args)
     set_env(args.random_seed)
-    if args.mode == "train":
-        train(args)
-    elif args.mode == "test":
-        test(args)
-    elif args.mode == "save_bert_x":
-        save_bert_x(args)
-    else:
-        raise NotImplementedError("running mode should be either 'train' or 'test'")
+    # if args.mode == "train":
+    train(args)
+    # elif args.mode == "test":
+    #     test(args)
+    # elif args.mode == "save_bert_x":
+    #     save_bert_x(args)
+    # else:
+    #     raise NotImplementedError("running mode should be either 'train' or 'test'")
 
 
 if __name__ == "__main__":

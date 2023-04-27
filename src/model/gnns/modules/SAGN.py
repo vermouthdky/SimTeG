@@ -28,9 +28,11 @@ class SAGN(nn.Module):
         super(SAGN, self).__init__()
         num_hops = args.gnn_num_layers + 1
         in_feats = args.num_feats
-        hidden = args.gnn_dim_hidden
+        hidden = args.hidden_size
         out_feats = args.num_labels
         dropout = args.gnn_dropout
+        self.num_feats = in_feats
+        self.hidden_size = hidden
 
         self._num_heads = num_heads
         self._hidden = hidden
@@ -83,6 +85,7 @@ class SAGN(nn.Module):
 
     def forward(self, feats, return_attn=False):
         out = 0
+        feats = [x for x in torch.split(feats, self.num_feats, -1)]
         feats = [self.input_drop(feat) for feat in feats]
         if self.pos_emb is not None:
             feats = [f + self.pos_emb[[i]] for i, f in enumerate(feats)]

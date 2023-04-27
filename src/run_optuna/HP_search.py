@@ -12,10 +12,10 @@ import torch.distributed as dist
 from optuna.exceptions import ExperimentalWarning
 from optuna.trial import TrialState
 
-sys.path.append(os.path.abspath(os.getcwd()))
 from main import set_env
-from src.args import parse_args, save_args
-from src.run import cleanup, get_trainer_class, load_data, set_single_env
+
+from ..args import parse_args, save_args
+from ..run import cleanup, get_trainer_class, load_data, set_single_env
 
 logger = logging.getLogger(__name__)
 # optuna.logging.set_verbosity(optuna.logging.ERROR)
