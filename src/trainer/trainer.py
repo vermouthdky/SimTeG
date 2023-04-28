@@ -131,7 +131,7 @@ class Trainer(ABC):
     def train_once(self, iter):
         pass
 
-    def train(self):
+    def train(self, return_value="valid"):
         self.model = self._prepare_model()
         self.train_set, self.valid_set = self._prepare_dataset()
         self.all_set = self._get_dataset("all")
@@ -149,7 +149,6 @@ class Trainer(ABC):
         # NOTE inference for SLE and propogation
         _, _, results = self.inference_and_evaluate()
 
-        valid_acc = results["valid_acc"]
         gc.collect()
         torch.cuda.empty_cache()
-        return valid_acc
+        return results["valid_acc"] if return_value == "valid" else results["test_acc"]

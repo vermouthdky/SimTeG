@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--cont", type=bool, default=False)
     parser.add_argument("--local_rank", type=int)
     parser.add_argument("--suffix", type=str, default="main")
+    parser.add_argument("--n_exps", type=int, default=1)
 
     # parameters for data and model storage
     parser.add_argument("--data_folder", type=str, default="../textual_ogb")
@@ -178,7 +179,7 @@ def _set_dataset_specific_args(args):
 
     if args.model_type in hidden_size_dict.keys():
         args.hidden_size = hidden_size_dict[args.model_type]
-    elif args.lm_type in hidden_size_dict.keys():
+    elif args.use_bert_x and args.lm_type in hidden_size_dict.keys():
         args.num_feats = args.hidden_size = hidden_size_dict[args.lm_type]
 
     return args

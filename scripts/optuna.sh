@@ -4,7 +4,7 @@ suffix=$6
 
 # set distributed env
 WORLD_SIZE=4
-MASTER_PORT=32020
+MASTER_PORT=$((1 + $RANDOM % 100000))
 
 project_dir='.'
 output_dir=${project_dir}/out/${dataset}/${model_type}/${suffix}

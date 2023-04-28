@@ -5,7 +5,7 @@ suffix=$6
 
 # distributed training envs
 WORLD_SIZE=4
-MASTER_PORT=32020
+MASTER_PORT=$((1 + $RANDOM % 100000))
 
 # set up output directory
 project_dir='.'

@@ -140,6 +140,7 @@ class LMTrainer(Trainer):
         train_steps = len(self.train_set) // total_batch_size + 1
         warmup_steps = self.args.warmup_ratio * train_steps
         training_args = TrainingArguments(
+            seed=self.args.random_seed,
             output_dir=self.args.output_dir,
             optim="adamw_torch",
             evaluation_strategy="steps",

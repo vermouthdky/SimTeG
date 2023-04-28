@@ -27,5 +27,6 @@ for model_type in GAMLP SAGN; do
         --gnn_epochs 100 \
         --lr_scheduler_type constant \
         --use_bert_x \
-        --bert_x_dir $bert_x_dir
+        --bert_x_dir $bert_x_dir \
+        -n_trials 10
 done

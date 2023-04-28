@@ -64,7 +64,7 @@ class InnerTrainer(HugTrainer):
         return (loss, {"logits": logits}) if return_outputs else loss
 
 
-class GNNTrainer(Trainer):
+class GNNSamplingTrainer(Trainer):
     def ckpt_path(self, iter, stage="gnn", module="gnn"):
         return osp.join(self.args.ckpt_dir, f"iter_{iter}_{stage}_{module}.pt")
 
@@ -108,6 +108,7 @@ class GNNTrainer(Trainer):
         warmup_steps = self.args.gnn_warmup_ratio * train_steps
         logger.info(f"eval_steps: {eval_steps}, train_steps: {train_steps}, warmup_steps: {warmup_steps}")
         training_args = TrainingArguments(
+            seed=self.args.random_seed,
             output_dir=self.args.output_dir,
             optim="adamw_torch",
             evaluation_strategy="steps",
@@ -186,7 +187,7 @@ class GNNTrainer(Trainer):
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         self.data.adj_t = deg_inv_sqrt.view(-1, 1) * self.data.adj_t * deg_inv_sqrt.view(1, -1)
 
-    def train(self):  # used when only train gnn_models
+    def train(self, return_value="valid"):  # used when only train gnn_models
         # preprocessing
         self.edge_index_to_adj_t()
         xs = [self.data.x]
@@ -213,7 +214,6 @@ class GNNTrainer(Trainer):
         # NOTE inference for SLE and propogation
         _, _, results = self.inference_and_evaluate()
 
-        valid_acc = results["valid_acc"]
         gc.collect()
         torch.cuda.empty_cache()
-        return valid_acc
+        return results["valid_acc"] if return_value == "valid" else results["test_acc"]

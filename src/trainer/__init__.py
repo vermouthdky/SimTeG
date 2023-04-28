@@ -1,5 +1,6 @@
 from .gbert_trainer import GBertTrainer
-from .gnn_trainer import GNNTrainer
+from .gnn_decoupling_trainer import GNNDecouplingTrainer
+from .gnn_sampling_trainer import GNNSamplingTrainer
 from .lm_trainer import LMTrainer
 
 
@@ -9,6 +10,8 @@ def get_trainer_class(model_type):
     elif model_type in ["GBert"]:
         return GBertTrainer
     elif model_type in ["GAMLP", "SAGN", "SIGN"]:
-        return GNNTrainer
+        return GNNDecouplingTrainer
+    elif model_type in ["GraphSAGE"]:
+        return GNNSamplingTrainer
     else:
         raise NotImplementedError("not implemented Trainer class")

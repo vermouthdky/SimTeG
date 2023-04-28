@@ -63,11 +63,9 @@ def load_data(args):
     return data, split_idx, evaluator, dataset.processed_dir
 
 
-def train(args):
+def train(args, return_value="valid"):
     # setup running envs
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    set_single_env(rank, world_size)
+    rank = os.getenv("RANK", -1)
     if rank not in [-1, 0]:
         # Make sure only the first process in distributed training will download model & vocab
         torch.distributed.barrier()
@@ -78,52 +76,6 @@ def train(args):
     # trainer
     Trainer = get_trainer_class(args.model_type)
     trainer = Trainer(args, data, split_idx, evaluator)
-    trainer.train()
+    acc = trainer.train(return_value=return_value)
     del trainer, data, split_idx, evaluator
-    cleanup()
-
-
-def test(args):
-    if is_dist():
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        set_single_env(rank, world_size)
-        if rank not in [-1, 0]:
-            # Make sure only the first process in distributed training will download model & vocab
-            torch.distributed.barrier()
-    # setup dataset: [ogbn-arxiv]
-    data, split_idx, evaluator, processed_dir = load_data(args)
-    if is_dist() and rank == 0:
-        torch.distributed.barrier()
-    # trainer
-    Trainer = get_trainer_class(args.model_type, args.use_hug_trainer)
-    trainer = Trainer(args, data, split_idx, evaluator)
-    test_acc = trainer.evaluate(mode="test")
-    logger.info("test_acc: {:.4f}".format(test_acc))
-    valid_acc = trainer.evaluate(mode="valid")
-    logger.info("valid_acc: {:.4f}".format(valid_acc))
-    train_acc = trainer.evaluate(mode="train")
-    logger.info("train_acc: {:.4f}".format(train_acc))
-    del trainer, data, split_idx, evaluator
-    cleanup()
-    return train_acc, valid_acc, test_acc
-
-
-def save_bert_x(args):
-    if is_dist():
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        set_single_env(rank, world_size)
-        if rank not in [-1, 0]:
-            # Make sure only the first process in distributed training will download model & vocab
-            torch.distributed.barrier()
-    # setup dataset: [ogbn-arxiv]
-    data, split_idx, evaluator, processed_dir = load_data(args)
-    if is_dist() and rank == 0:
-        torch.distributed.barrier()
-    # trainer
-    Trainer = get_trainer_class(args.model_type)
-    trainer = Trainer(args, data, split_idx, evaluator)
-    trainer.save_bert_x(data)
-    del trainer, data, split_idx, evaluator
-    cleanup()
+    return acc

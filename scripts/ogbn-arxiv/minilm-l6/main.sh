@@ -17,7 +17,7 @@ suffix=main
 lm_type=${model_type}
 bert_x_dir=out/${dataset}/${lm_type}/${suffix}/cached_embs/iter_0_x_embs.pt
 
-for model_type in GAMLP SAGN; do
+for model_type in SAGN; do
     suffix=optuna_on_X_${lm_type}
     bash scripts/optuna.sh --model_type $model_type --dataset $dataset --suffix $suffix \
         --lm_type $lm_type \
