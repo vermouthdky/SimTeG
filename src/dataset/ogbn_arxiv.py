@@ -51,15 +51,17 @@ class OgbnArxivWithText(InMemoryDataset):
         self.should_tokenize = tokenize
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True) if tokenize else None
         # check if the dataset is already processed with the same tokenizer
-        rank = -1
-        if is_dist():
-            rank = int(os.environ["RANK"])
-
-        metainfo = self.load_metainfo()
-        if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
-            logger.critical("The tokenizer is changed. Re-processing the dataset.")
-            shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
+        rank = int(os.getenv("RANK", -1))
+        if rank in [0, -1]:  # check the metainfo
+            metainfo = self.load_metainfo()
+            if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
+                logger.critical("The tokenizer is changed. Reprocessing the dataset.")
+                shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
+        if rank not in [0, -1]:  # process data on main rank
+            dist.barrier()
         super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
+        if rank == 0:
+            dist.barrier()
         if rank in [0, -1] and tokenize:
             self.save_metainfo()
         self.data, self.slices = torch.load(self.processed_paths[0])

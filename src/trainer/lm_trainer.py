@@ -221,3 +221,25 @@ class LMTrainer(Trainer):
         logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
         gc.collect()
         torch.cuda.empty_cache()
+
+    def train(self, return_value="valid"):
+        self.model = self._prepare_model()
+        self.train_set, self.valid_set = self._prepare_dataset()
+        self.all_set = self._get_dataset("all")
+        self.trainer = self._prepare_trainer()
+        iter = self.iter = 0
+
+        # ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0")
+        # if self.args.use_cache and os.path.exists(ckpt_path):
+        #     logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
+        # else:
+        assert self.args.mode in ["train", "test"]
+        if self.args.mode == "train":
+            self.train_once(iter)
+        logger.warning(f"\n*************** Start inference and testing ***************\n")
+        # NOTE inference for SLE and propogation
+        _, _, results = self.inference_and_evaluate()
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        return results["valid_acc"] if return_value == "valid" else results["test_acc"]

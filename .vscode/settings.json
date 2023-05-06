@@ -1,11 +1,15 @@
 {
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true,
-    "sync-rsync.remote": "sea:/home/aiops/duanky/gbert/",
-    "sync-rsync.onSave": true,
-    "sync-rsync.onSaveIndividual": true,
+    "sync-rsync.remote": "",
+    "sync-rsync.onSave": false,
+    "sync-rsync.onSaveIndividual": false,
     "sync-rsync.shell": "",
     "sync-rsync.autoHideOutput": false,
     "sync-rsync.executable": "/usr/bin/rsync",
     "python.linting.flake8Enabled": false,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "python.formatting.provider": "none",
 }

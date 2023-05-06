@@ -12,7 +12,7 @@ import torch.distributed as dist
 from optuna.exceptions import ExperimentalWarning
 from optuna.trial import TrialState
 
-from main import set_env
+from main import set_seed
 
 from ..args import parse_args, save_args
 from ..run import cleanup, get_trainer_class, load_data, set_single_env
@@ -30,6 +30,7 @@ class HP_search(ABC):
     def objective(self, trial):
         args = self.args
         rank = int(os.environ["RANK"])
+        args.random_seed = rank
 
         args = self.setup_search_space(args, trial)
         args.optuna = True
@@ -57,6 +58,7 @@ class HP_search(ABC):
 
     def load_study(self):
         args = parse_args()
+        args.random_seed = 0
         study = optuna.load_study(
             storage="sqlite:///optuna.db",
             study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
@@ -84,12 +86,13 @@ class HP_search(ABC):
     def run(self, n_trials):
         # run
         args = self.args
-        set_env(random_seed=123)
+        args.random_seed = 0
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
         dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
         # have to set_device in order to use NCCL collective function, e.g. dist.broadcast_object_list
         torch.cuda.set_device(rank)
+        set_seed(random_seed=args.random_seed)
 
         if rank == 0:
             study = optuna.create_study(

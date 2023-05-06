@@ -31,6 +31,7 @@ def cleanup():
 
 def load_data(args):
     tokenize = args.model_type not in ["GAMLP", "SAGN", "SIGN"]
+    rank = os.getenv("RANK", -1)
     dataset = load_dataset(
         args.dataset,
         root=args.data_folder,

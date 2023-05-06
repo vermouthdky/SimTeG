@@ -3,13 +3,19 @@ import logging
 import os
 import os.path as osp
 import shutil
+from typing import Callable, List, NamedTuple, Optional, Tuple, Union
 
 import evaluate
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch import Tensor
+from torch.utils.data import DataLoader, Dataset
+from torch_geometric.loader import NeighborLoader
 from torch_geometric.transforms import SIGN, ToSparseTensor
+from torch_geometric.utils import subgraph
+from torch_sparse import SparseTensor
 from tqdm import tqdm
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
@@ -22,36 +28,8 @@ from .trainer import Trainer
 logger = logging.getLogger(__name__)
 
 
-class Dataset(torch.utils.data.Dataset):
-    def __init__(self, x_emb, x0, y_emb, labels):
-        super().__init__()
-        self.data = {
-            "x_emb": x_emb,
-            "x0": x0,
-            "y_emb": y_emb,
-            "labels": labels.view(-1, 1),
-        }
-
-    def __len__(self):
-        return len(self.data["labels"])
-
-    def __getitem__(self, index):
-        if isinstance(index, torch.Tensor):
-            index = index.item()
-        batch_data = dict()
-        for key in self.data.keys():
-            if self.data[key] is not None:
-                batch_data[key] = self.data[key][index]
-        return batch_data
-
-
 class InnerTrainer(HugTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
-        """
-        How the loss is computed by Trainer. By default, all models return the loss in the first element.
-        Subclass and override for custom behavior.
-        NOTE: add KL divergence here
-        """
         if "labels" in inputs:
             labels = inputs.pop("labels")
         else:
@@ -63,33 +41,41 @@ class InnerTrainer(HugTrainer):
         loss = loss_op(logits, labels.view(-1))
         return (loss, {"logits": logits}) if return_outputs else loss
 
+    def _get_dataloader(self, mode) -> DataLoader:
+        assert mode in ["train", "valid", "test"]
+        world_size = int(os.getenv("WORLD_SIZE", 1))
+        rank = int(os.getenv("RANK", -1))
+        mask = self.train_dataset[f"{mode}_mask"]
+        train_idx = mask.nonzero(as_tuple=False).view(-1)
+        train_idx = train_idx.split(train_idx.size(0) // world_size)[rank]
+        kwargs = dict(
+            batch_size=self.args.per_device_train_batch_size,
+            num_workers=self.args.dataloader_num_workers,
+            persistent_workers=True,
+        )
+        return NeighborLoader(
+            self.train_dataset, input_nodes=train_idx, num_neighbors=[25, 10], shuffle=True, drop_last=True, **kwargs
+        )
+
+    def get_train_dataloader(self) -> DataLoader:
+        return self._get_dataloader("train")
+
+    def get_eval_dataloader(self, eval_dataset: Dataset | None = None) -> DataLoader:
+        del eval_dataset  # do not use it in transductive setting
+        return self._get_dataloader("valid")
+
+    def get_test_dataloader(self, test_dataset: Dataset | None = None) -> DataLoader:
+        del test_dataset
+        return self._get_dataloader("test")
+
 
 class GNNSamplingTrainer(Trainer):
     def ckpt_path(self, iter, stage="gnn", module="gnn"):
         return osp.join(self.args.ckpt_dir, f"iter_{iter}_{stage}_{module}.pt")
 
-    def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid")
-
-    def _get_dataset(self, mode):
-        assert mode in ["train", "valid", "test", "all"]
-        use_pesudo = self.args.use_SLE and mode == "train"
-        dataset = Dataset(
-            x_emb=self.data.x_emb,
-            x0=self.data.x,
-            y_emb=self.data.sle.y_emb if self.args.use_SLE else None,
-            labels=self.data.y if not use_pesudo else self.data.sle.pesudo_y,
-        )
-        if use_pesudo:
-            return torch.utils.data.Subset(dataset, self.data.sle.pesudo_train_idx)
-        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
-
     def _prepare_model(self):
         model_class = get_model_class(self.args.model_type, self.args.use_adapter)
-        if self.args.model_type == "GBert":
-            model = model_class(self.args, self.iter, "gnn")
-        else:
-            model = model_class(self.args)
+        model = model_class(self.args)
         return model
 
     def _compute_metrics(self, eval_pred):
@@ -135,8 +121,8 @@ class GNNSamplingTrainer(Trainer):
         return InnerTrainer(
             model=self.model,
             args=training_args,
-            train_dataset=self.train_set,
-            eval_dataset=self.valid_set,
+            train_dataset=self.data,
+            eval_dataset=self.data,
             compute_metrics=self._compute_metrics,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )

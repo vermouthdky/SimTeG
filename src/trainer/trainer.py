@@ -71,13 +71,6 @@ class Trainer(ABC):
         ckpt = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt, strict=False)
 
-    @abstractmethod
-    def _get_dataset(self, mode):
-        pass
-
-    def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid")
-
     def update_data(self, data, split_idx):
         self.data = data
         self.split_idx = split_idx
@@ -90,14 +83,6 @@ class Trainer(ABC):
         sampler = DistributedSampler(dataset, shuffle=shuffle) if is_dist() else None
         shuffle = shuffle if sampler is None else False
         return DataLoader(dataset, sampler=sampler, batch_size=batch_size, shuffle=shuffle)
-
-    @abstractmethod
-    def _prepare_model(self):
-        pass
-
-    @abstractmethod
-    def _prepare_trainer(self):
-        pass
 
     @abstractmethod
     def inference(self, dataset, embs_path):
@@ -131,24 +116,6 @@ class Trainer(ABC):
     def train_once(self, iter):
         pass
 
+    @abstractmethod
     def train(self, return_value="valid"):
-        self.model = self._prepare_model()
-        self.train_set, self.valid_set = self._prepare_dataset()
-        self.all_set = self._get_dataset("all")
-        self.trainer = self._prepare_trainer()
-        iter = self.iter = 0
-
-        # ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0")
-        # if self.args.use_cache and os.path.exists(ckpt_path):
-        #     logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
-        # else:
-        assert self.args.mode in ["train", "test"]
-        if self.args.mode == "train":
-            self.train_once(iter)
-        logger.warning(f"\n*************** Start inference and testing ***************\n")
-        # NOTE inference for SLE and propogation
-        _, _, results = self.inference_and_evaluate()
-
-        gc.collect()
-        torch.cuda.empty_cache()
-        return results["valid_acc"] if return_value == "valid" else results["test_acc"]
+        pass

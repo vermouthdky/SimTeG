@@ -84,6 +84,9 @@ class GNNDecouplingTrainer(Trainer):
             return torch.utils.data.Subset(dataset, self.data.sle.pesudo_train_idx)
         return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
+    def _prepare_dataset(self):
+        return self._get_dataset("train"), self._get_dataset("valid")
+
     def _prepare_model(self):
         model_class = get_model_class(self.args.model_type, self.args.use_adapter)
         if self.args.model_type == "GBert":

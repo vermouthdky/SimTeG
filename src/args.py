@@ -13,7 +13,7 @@ def parse_args():
     # environment
     parser.add_argument("--mode", type=str, default="train", choices=["train", "test", "save_bert_x"])
     parser.add_argument("--single_gpu", type=int, default=0)
-    parser.add_argument("--random_seed", type=int, default=123)
+    parser.add_argument("--random_seed", type=int, default=0)
     parser.add_argument("--cont", type=bool, default=False)
     parser.add_argument("--local_rank", type=int)
     parser.add_argument("--suffix", type=str, default="main")
@@ -154,6 +154,9 @@ def _set_pretrained_repo(args):
 
     if args.model_type in dict.keys():
         assert args.pretrained_repo in dict[args.model_type]
+    else:
+        assert args.lm_type in dict.keys()
+        assert args.pretrained_repo in dict[args.lm_type]
     return args
 
 
