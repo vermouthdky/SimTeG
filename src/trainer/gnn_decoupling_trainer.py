@@ -47,11 +47,6 @@ class Dataset(torch.utils.data.Dataset):
 
 class InnerTrainer(HugTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
-        """
-        How the loss is computed by Trainer. By default, all models return the loss in the first element.
-        Subclass and override for custom behavior.
-        NOTE: add KL divergence here
-        """
         if "labels" in inputs:
             labels = inputs.pop("labels")
         else:
@@ -65,12 +60,6 @@ class InnerTrainer(HugTrainer):
 
 
 class GNNDecouplingTrainer(Trainer):
-    def ckpt_path(self, iter, stage="gnn", module="gnn"):
-        return osp.join(self.args.ckpt_dir, f"iter_{iter}_{stage}_{module}.pt")
-
-    def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid")
-
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
         use_pesudo = self.args.use_SLE and mode == "train"
@@ -87,21 +76,13 @@ class GNNDecouplingTrainer(Trainer):
     def _prepare_dataset(self):
         return self._get_dataset("train"), self._get_dataset("valid")
 
+    def _prepare_dataset(self):
+        return self._get_dataset("train"), self._get_dataset("valid")
+
     def _prepare_model(self):
         model_class = get_model_class(self.args.model_type, self.args.use_adapter)
-        if self.args.model_type == "GBert":
-            model = model_class(self.args, self.iter, "gnn")
-        else:
-            model = model_class(self.args)
+        model = model_class(self.args)
         return model
-
-    def _compute_metrics(self, eval_pred):
-        metric = evaluate.load("accuracy")
-        logits, labels = eval_pred
-        if isinstance(logits, tuple):
-            logits = logits[0]
-        predictions = logits.argmax(-1)
-        return metric.compute(predictions=predictions, references=labels)
 
     def _prepare_trainer(self):
         # prepare training args
@@ -140,46 +121,36 @@ class GNNDecouplingTrainer(Trainer):
             args=training_args,
             train_dataset=self.train_set,
             eval_dataset=self.valid_set,
-            compute_metrics=self._compute_metrics,
+            compute_metrics=self.compute_metrics,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )
 
     def inference(self, dataset, embs_path):
-        logits_name = f"iter_{self.iter}_logits.pt"
+        logits_name = f"logits.pt"
         emb_handler = EmbeddingHandler(embs_path)
         if self.args.use_cache and emb_handler.has(logits_name):
             logits_embs = emb_handler.load(logits_name)
             if isinstance(logits_embs, np.ndarray):
                 logits_embs = torch.from_numpy(logits_embs)
-        else:
-            eval_output = self.trainer.predict(dataset)
-            logits_embs = eval_output.predictions
-            logits_embs = torch.from_numpy(logits_embs)
-            emb_handler.save(logits_embs, logits_name)
-            logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
+            else:
+                eval_output = self.trainer.predict(dataset)
+                logits_embs = eval_output.predictions
+                logits_embs = torch.from_numpy(logits_embs)
+                emb_handler.save(logits_embs, logits_name)
+                logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
         return (logits_embs, None)
 
-    def train_once(self, iter):
+    def train_once(self):
         dist.barrier()
-        self.model = self._prepare_model()
-        # TODO: maybe we should not load the gnn model here
-        if iter > 0 and self.args.inherit and self.args.gnn_inherit:
-            self.load_model(self.model.gnn_model, self.ckpt_path(iter, "lm", "gnn"))
-
-        self.train_set, self.valid_set = self._prepare_dataset()
-        self.trainer = self._prepare_trainer()
         if self.trial is not None:
             self.trainer._hp_search_setup(self.trial)
 
-        if self.args.train_mode != "lm" or iter == 0:
-            train_output = self.trainer.train()
-            self.save_model(self.model.gnn_model, self.ckpt_path(iter, "gnn", "gnn"))
-            global_step, train_dict = train_output.global_step, train_output.metrics
-            train_dict["global_step"] = global_step
-            self.trainer.save_metrics("train", train_dict)
-            logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
-        else:
-            self.save_model(self.model.gnn_model, self.ckpt_path(iter, "gnn", "gnn"))
+        train_output = self.trainer.train()
+        self.save_model(self.model, self.ckpt_path)
+        global_step, train_dict = train_output.global_step, train_output.metrics
+        train_dict = global_step
+        self.trainer.save_metrics("train", train_dict)
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -200,22 +171,15 @@ class GNNDecouplingTrainer(Trainer):
             xs += [self.data.adj_t @ xs[-1]]
         xs = xs[1:]  # remove the hop-0 feature, which is saved in self.data.x, this is consistent with gbert
         self.data.x_emb = torch.cat(xs, dim=-1)
-        logger.info("finished processing")
 
         self.model = self._prepare_model()
         self.train_set, self.valid_set = self._prepare_dataset()
-        self.all_set = self._get_dataset("all")
         self.trainer = self._prepare_trainer()
-        iter = self.iter = 0
 
-        # ckpt_path = os.path.join(self.args.ckpt_dir, "iter_0")
-        # if self.args.use_cache and os.path.exists(ckpt_path):
-        #     logger.warning(f"\n*********iter {iter} has been trained, use cached ckpt instead!*********\n")
-        # else:
-        self.train_once(iter)
         logger.warning(f"\n*************** Start inference and testing ***************\n")
         # NOTE inference for SLE and propogation
-        _, _, results = self.inference_and_evaluate()
+        all_set = self._get_dataset("all")
+        _, _, results = self.inference_and_evaluate(all_set)
 
         gc.collect()
         torch.cuda.empty_cache()

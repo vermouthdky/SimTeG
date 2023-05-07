@@ -1,10 +1,12 @@
 import gc
 import logging
 import os
+import os.path as osp
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import evaluate
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -57,8 +59,9 @@ class Trainer(ABC):
     def disable_tqdm(self):
         return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
-    def next_iter(self):
-        self.iter += 1
+    @property
+    def ckpt_path(self):
+        return osp.join(self.args.ckpt_dir, "model.pt")
 
     def save_model(self, model: torch.nn.Module, ckpt_path):
         if self.rank <= 0:
@@ -71,22 +74,44 @@ class Trainer(ABC):
         ckpt = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt, strict=False)
 
-    def update_data(self, data, split_idx):
-        self.data = data
-        self.split_idx = split_idx
-
-    def _get_dataloader(self, dataset, batch_size, shuffle, enumerate=False):
-        """
-        return a dataloader with DistributedSampler:
-        NOTE for inference, you have to use 'dist.gather()' to gather the results from all gpus
-        """
-        sampler = DistributedSampler(dataset, shuffle=shuffle) if is_dist() else None
-        shuffle = shuffle if sampler is None else False
-        return DataLoader(dataset, sampler=sampler, batch_size=batch_size, shuffle=shuffle)
+    def _prepare_model(self):
+        model_class = get_model_class(self.args.model_type, self.args.use_adapter)
+        return model_class(self.args)
 
     @abstractmethod
-    def inference(self, dataset, embs_path):
+    def _prepare_dataset(self):
         pass
+
+    @abstractmethod
+    def _prepare_trainer(self):
+        pass
+
+    def compute_metrics(self, eval_pred):
+        metric = evaluate.load("accuracy")
+        logits, labels = eval_pred
+        if isinstance(logits, tuple):
+            logits = logits[0]
+        predictions = logits.argmax(-1)
+        return metric.compute(predictions=predictions, references=labels)
+
+    def inference(self, dataset, embs_path):
+        x_embs_name = f"x_embs.pt"
+        logits_name = f"logits.pt"
+        emb_handler = EmbeddingHandler(embs_path)
+        if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
+            x_embs = emb_handler.load(x_embs_name)
+            logits_embs = emb_handler.load(logits_name)
+            if isinstance(x_embs, np.ndarray):
+                x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
+        else:
+            eval_output = self.trainer.predict(dataset)
+            logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
+            logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
+            emb_handler.save(x_embs, x_embs_name)
+            emb_handler.save(logits_embs, logits_name)
+            logger.info(f"save the logits of {self.args.lm_type} to {osp.join(embs_path, logits_name)}")
+            logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
+        return logits_embs, x_embs
 
     def _evaluate(self, logits, y):
         def accuracy(logits, y_true):
@@ -103,9 +128,9 @@ class Trainer(ABC):
             results[f"{split}_loss"] = loss
         return results
 
-    def inference_and_evaluate(self):
+    def inference_and_evaluate(self, dataset):
         embs_path = os.path.join(self.trainer.args.output_dir, "cached_embs")
-        logits_embs, x_embs = self.inference(self.all_set, embs_path)
+        logits_embs, x_embs = self.inference(dataset, embs_path)
         results = self._evaluate(logits_embs, self.data.y)
         logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
         gc.collect()

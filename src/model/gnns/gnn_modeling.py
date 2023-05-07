@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from .modules.GAMLP import JK_GAMLP as PureGAMLP
+from .modules.GraphSAGE import SAGE
 from .modules.SAGN import SAGN as PureSAGN
 from .modules.SIGN import SIGN as PureSIGN
 
@@ -37,3 +38,16 @@ class GAMLP(nn.Module):
     def forward(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None):
         xs = torch.cat([x0, x_emb], dim=-1)
         return self.gnn_model(xs)
+
+
+class GraphSAGE(nn.Module):
+    def __init__(self, args):
+        super(GraphSAGE, self).__init__()
+        self.gnn_model = SAGE(args.num_feats, args.hidden_dim, args.num_classes, args.gnn_num_layers)
+
+    def forward(self, x, edge_index):
+        return self.gnn_model(x, edge_index)
+
+    # @torch.no_grad()
+    # def inference(self, x_all, device, subgraph_loader):
+    #     return self.gnn_model.inference(x_all, device, subgraph_loader)
