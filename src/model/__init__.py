@@ -4,6 +4,7 @@ from .lms.lm_modeling import (
     AdapterDeberta,
     AdapterRoberta,
     Deberta,
+    E5_model,
     Roberta,
     Sentence_Transformer,
 )
@@ -20,6 +21,7 @@ def get_model_class(model: str, use_adapter: bool = False):
         "all-roberta-large-v1": Sentence_Transformer,
         "all-mpnet-base-v2": Sentence_Transformer,
         "all-MiniLM-L6-v2": Sentence_Transformer,
+        "e5-large": E5_model,
     }
     if use_adapter:
         model_class["Roberta"] = AdapterRoberta

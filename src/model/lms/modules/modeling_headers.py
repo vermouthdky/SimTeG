@@ -4,7 +4,7 @@ from torch import nn
 from .modeling_adapter_deberta import ContextPooler, StableDropout
 
 
-class SentenceTransformerClsHead(nn.Module):
+class SentenceClsHead(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)

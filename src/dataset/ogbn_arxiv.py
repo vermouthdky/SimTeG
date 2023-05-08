@@ -155,7 +155,7 @@ class OgbnArxivWithText(InMemoryDataset):
         # BUG: the first column's id is inplaced with 'titleabs.tsv'. Try to fix it manually
         df.iloc[0][0] = 200971
         df_mapping = pd.read_csv(osp.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
-        df["abstitle"] = "title: " + df["title"] + ". " + "abstract: " + df["abstract"]
+        df["abstitle"] = "title: " + df["title"] + "; " + "abstract: " + df["abstract"]
         df = df.drop(columns=["title", "abstract"])
         df = df.astype({"paper id": np.int64, "abstitle": str})
         df = df_mapping.merge(df, how="inner", on="paper id")

@@ -150,6 +150,7 @@ def _set_pretrained_repo(args):
         "all-roberta-large-v1": ["sentence-transformers/all-roberta-large-v1"],
         "all-mpnet-base-v2": ["sentence-transformers/all-mpnet-base-v2"],
         "all-MiniLM-L6-v2": ["sentence-transformers/all-MiniLM-L6-v2"],
+        "e5-large": ["intfloat/e5-large"],
     }
 
     if args.model_type in dict.keys():
@@ -178,6 +179,7 @@ def _set_dataset_specific_args(args):
         "all-roberta-large-v1": 1024,
         "all-mpnet-base-v2": 768,
         "all-MiniLM-L6-v2": 384,
+        "e5-large": 1024,
     }
 
     if args.model_type in hidden_size_dict.keys():
