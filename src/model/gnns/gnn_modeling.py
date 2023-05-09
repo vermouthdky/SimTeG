@@ -2,9 +2,21 @@ import torch
 from torch import nn
 
 from .modules.GAMLP import JK_GAMLP as PureGAMLP
+from .modules.GAMLP import JK_GAMLP_RLU as PureGAMLPSLE
 from .modules.GraphSAGE import SAGE
 from .modules.SAGN import SAGN as PureSAGN
+from .modules.SAGN import SAGN_SLE as PureSAGNSLE
 from .modules.SIGN import SIGN as PureSIGN
+
+
+class SGC(nn.Module):
+    def __init__(self, args):
+        super(SGC, self).__init__()
+        self.gnn_model = SGC(args.num_feats, args.num_classes)
+
+    def __init__(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None)
+        xs = torch.cat([x0, x_emb], dim=-1)
+        return self.gnn_model(xs)
 
 
 class SAGN(nn.Module):

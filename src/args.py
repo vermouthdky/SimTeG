@@ -157,7 +157,7 @@ def _set_pretrained_repo(args):
         assert args.pretrained_repo in dict[args.model_type]
     else:
         assert args.lm_type in dict.keys()
-        assert args.pretrained_repo in dict[args.lm_type]
+        # assert args.pretrained_repo in dict[args.lm_type]
     return args
 
 

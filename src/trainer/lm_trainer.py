@@ -66,7 +66,7 @@ class LMTrainer(Trainer):
         return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
     def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid")
+        return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
 
     def _prepare_trainer(self):
         # prepare training args
@@ -109,39 +109,3 @@ class LMTrainer(Trainer):
             compute_metrics=self.compute_metrics,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
         )
-
-    def train_once(self, iter):
-        dist.barrier()
-        if self.trial is not None:
-            self.trainer._hp_search_setup(self.trial)
-
-        train_output = self.trainer.train()
-        self.save_model(self.model.bert_model, self.ckpt_path(iter, "lm", "lm"))
-        if iter > 0:
-            self.save_model(self.model.gnn_model, self.ckpt_path(iter, "lm", "gnn"))
-
-        global_step, train_dict = train_output.global_step, train_output.metrics
-        train_dict["global_step"] = global_step
-        self.trainer.save_metrics("train", train_dict)
-        # print train_dict
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def train(self, return_value="valid"):
-        self.model = self._prepare_model()
-        self.train_set, self.valid_set = self._prepare_dataset()
-        self.trainer = self._prepare_trainer()
-
-        assert self.args.mode in ["train", "test"]
-        if self.args.mode == "train":
-            self.train_once(iter)
-
-        logger.warning(f"\n*************** Start inference and testing ***************\n")
-        all_dataset = self._get_dataset("all")
-        _, _, results = self.inference_and_evaluate(all_dataset)
-
-        del all_dataset
-        gc.collect()
-        torch.cuda.empty_cache()
-        return results["valid_acc"] if return_value == "valid" else results["test_acc"]

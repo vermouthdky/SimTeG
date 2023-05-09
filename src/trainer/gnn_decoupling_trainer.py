@@ -74,15 +74,7 @@ class GNNDecouplingTrainer(Trainer):
         return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
     def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid")
-
-    def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid")
-
-    def _prepare_model(self):
-        model_class = get_model_class(self.args.model_type, self.args.use_adapter)
-        model = model_class(self.args)
-        return model
+        return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
 
     def _prepare_trainer(self):
         # prepare training args
@@ -140,21 +132,7 @@ class GNNDecouplingTrainer(Trainer):
                 logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
         return (logits_embs, None)
 
-    def train_once(self):
-        dist.barrier()
-        if self.trial is not None:
-            self.trainer._hp_search_setup(self.trial)
-
-        train_output = self.trainer.train()
-        self.save_model(self.model, self.ckpt_path)
-        global_step, train_dict = train_output.global_step, train_output.metrics
-        train_dict = global_step
-        self.trainer.save_metrics("train", train_dict)
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def edge_index_to_adj_t(self):
+    def _edge_index_to_adj_t(self):
         self.data = ToSparseTensor()(self.data)
         deg = self.data.adj_t.sum(dim=1).to(torch.float)
         deg_inv_sqrt = deg.pow(-0.5)
@@ -163,7 +141,7 @@ class GNNDecouplingTrainer(Trainer):
 
     def train(self, return_value="valid"):  # used when only train gnn_models
         # preprocessing
-        self.edge_index_to_adj_t()
+        self._edge_index_to_adj_t()
         xs = [self.data.x]
         disable_tqdm = self.args.disable_tqdm or (is_dist() and int(os.environ["RANK"]) > 0)
         logger.info("propogating features")
@@ -171,16 +149,4 @@ class GNNDecouplingTrainer(Trainer):
             xs += [self.data.adj_t @ xs[-1]]
         xs = xs[1:]  # remove the hop-0 feature, which is saved in self.data.x, this is consistent with gbert
         self.data.x_emb = torch.cat(xs, dim=-1)
-
-        self.model = self._prepare_model()
-        self.train_set, self.valid_set = self._prepare_dataset()
-        self.trainer = self._prepare_trainer()
-
-        logger.warning(f"\n*************** Start inference and testing ***************\n")
-        # NOTE inference for SLE and propogation
-        all_set = self._get_dataset("all")
-        _, _, results = self.inference_and_evaluate(all_set)
-
-        gc.collect()
-        torch.cuda.empty_cache()
-        return results["valid_acc"] if return_value == "valid" else results["test_acc"]
+        super().train(return_value=return_value)

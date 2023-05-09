@@ -87,6 +87,7 @@ class GNNSamplingTrainer(Trainer):
             mask = torch.zeros(self.data.num_nodes, dtype=torch.bool)
             mask[self.split_idx[split]] = True
             self.data[f"{split}_mask"] = mask
+        return self.data, self.data, self.data
 
     def _prepare_trainer(self):
         # prepare training args
@@ -143,31 +144,3 @@ class GNNSamplingTrainer(Trainer):
             emb_handler.save(logits_embs, logits_name)
             logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
         return (logits_embs, None)
-
-    def train_once(self):
-        dist.barrier()
-
-        if self.trial is not None:
-            self.trainer._hp_search_setup(self.trial)
-
-        train_output = self.trainer.train()
-        self.save_model(self.model, self.ckpt_path)
-        global_step, train_dict = train_output.global_step, train_output.metrics
-        train_dict["global_step"] = global_step
-        self.trainer.save_metrics("train", train_dict)
-        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def train(self, return_value="valid"):  # used when only train gnn_models
-        self.model = self._prepare_model()
-        self._prepare_dataset()
-        self.trainer = self._prepare_trainer()
-        self.train_once()
-        logger.warning(f"\n*************** Start inference and testing ***************\n")
-        # NOTE inference for SLE and propogation
-        _, _, results = self.inference_and_evaluate(self.data)
-
-        gc.collect()
-        torch.cuda.empty_cache()
-        return results["valid_acc"] if return_value == "valid" else results["test_acc"]

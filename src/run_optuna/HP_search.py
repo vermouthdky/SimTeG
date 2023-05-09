@@ -1,10 +1,10 @@
 import gc
 import logging
 import os
-import pickle
-import sys
+import shutil
 import warnings
 from abc import ABC, abstractmethod
+from functools import partial
 
 import optuna
 import torch
@@ -21,6 +21,14 @@ logger = logging.getLogger(__name__)
 # optuna.logging.set_verbosity(optuna.logging.ERROR)
 warnings.filterwarnings("ignore", category=ExperimentalWarning, module="optuna.multi_objective")
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+
+def save_best_trial(study, trial, output_dir):  # call back
+    best_value = study.best_trial.value if study.best_trial is not None else 0.0
+    cur_val = trial.value
+    if cur_val is not None and cur_val > best_value:
+        best_output_dir = os.path.join(output_dir, "best")
+        shutil.copytree(output_dir, best_output_dir)
 
 
 class HP_search(ABC):
@@ -100,6 +108,8 @@ class HP_search(ABC):
                 storage="sqlite:///optuna.db",
                 study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
                 load_if_exists=True,
+                pruner=optuna.pruners.SuccessiveHalvingPruner(),
+                callbacks=[partial(save_best_trial, output_dir=args.output_dir)],
             )
             study.optimize(self.objective, n_trials=n_trials)
         else:

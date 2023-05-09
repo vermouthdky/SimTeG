@@ -76,7 +76,10 @@ class Trainer(ABC):
 
     def _prepare_model(self):
         model_class = get_model_class(self.args.model_type, self.args.use_adapter)
-        return model_class(self.args)
+        model = model_class(self.args)
+        n_params = sum(p.numel() for p in model.parameters())
+        logger.warning(f"Model: {self.args.model_type}, Num of Params: {n_params}")
+        return model
 
     @abstractmethod
     def _prepare_dataset(self):
@@ -137,10 +140,33 @@ class Trainer(ABC):
         torch.cuda.empty_cache()
         return logits_embs, x_embs, results  # x_embs is None in GNNTrainer
 
-    @abstractmethod
-    def train_once(self, iter):
-        pass
+    def train_once(self):
+        dist.barrier()
+        if self.trial is not None:
+            self.trainer._hp_search_setup(self.trial)
+        train_output = self.trainer.train()
+        # save outputs
+        self.save_model(self.model, self.ckpt_path)
+        global_step, train_dict = train_output.global_step, train_output.metrics
+        train_dict["global_step"] = global_step
+        self.trainer.save_metrics("train", train_dict)
+        logger.critical("".join("{}:{} ".format(k, v) for k, v in train_dict.items()))
+        gc.collect()
+        torch.cuda.empty_cache()
 
-    @abstractmethod
+    def prepare(self):
+        self.model = self._prepare_model()
+        self.train_set, self.valid_set, self.all_set = self._prepare_dataset()
+        self.trainer = self._prepare_trainer()
+
     def train(self, return_value="valid"):
-        pass
+        self.prepare()
+        assert self.args.mode in ["train", "test"]
+        if self.args.mode == "train":
+            self.train_once()
+
+        logger.warning(f"\n*************** Start inference and testing ***************\n")
+        _, _, results = self.inference_and_evaluate(self.all_set)
+        gc.collect()
+        torch.cuda.empty_cache()
+        return results["valid_acc"] if return_value == "valid" else results["test_acc"]

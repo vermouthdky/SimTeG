@@ -23,7 +23,7 @@ from .modules import (
     AdapterRobertaModel,
     DebertaClassificationHead,
     RobertaClassificationHead,
-    SentenceTransformerClsHead,
+    SentenceClsHead,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class E5_model(nn.Module):
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config)
-        self.head = SentenceTransformerClsHead(config)
+        self.head = SentenceClsHead(config)
 
     def average_pool(self, last_hidden_states, attention_mask):  # for E5_model
         last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
@@ -73,7 +73,7 @@ class Sentence_Transformer(nn.Module):
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
         self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config, add_pooling_layer=False)
-        self.head = SentenceTransformerClsHead(config)
+        self.head = SentenceClsHead(config)
         if args.use_adapter:
             lora_config = LoraConfig(
                 task_type=TaskType.SEQ_CLS, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
