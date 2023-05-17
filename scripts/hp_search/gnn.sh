@@ -1,7 +1,7 @@
 dataset=$1
 lm_model_type=$2
 gnn_model_type=$3
-suffix=optuna
+suffix=$4
 
 bert_x_dir=out/${dataset}/${lm_model_type}/${suffix}/best/cached_embs/x_embs.pt
 

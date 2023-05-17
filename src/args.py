@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument("--fix_gnn", action="store_true", default=False, help="fix gnn model when finetuning bert")
     parser.add_argument("--compute_kl_loss", action="store_true", default=False)
     parser.add_argument("--use_default_config", action="store_true", default=False)
+    parser.add_argument("--use_peft", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -102,6 +103,11 @@ def parse_args():
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
     parser.add_argument("--n_trials", type=int, default=20)
     parser.add_argument("--load_study", action="store_true", default=False)
+
+    # peft lora hyperparameters
+    parser.add_argument("--peft_r", type=int, default=8)
+    parser.add_argument("--peft_lora_alpha", type=float, default=32)
+    parser.add_argument("--peft_lora_dropout", type=float, default=0.1)
 
     # other hyperparameters
     parser.add_argument(

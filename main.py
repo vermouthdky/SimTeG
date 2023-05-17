@@ -54,10 +54,10 @@ def main(args):
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     set_single_env(rank, world_size)
-    for random_seed in range(args.n_exps):
+    for i, random_seed in enumerate(range(args.n_exps)):
         random_seed += args.start_seed
         set_seed(random_seed)
-        logger.critical(f"{random_seed}-th run with seed {random_seed}")
+        logger.critical(f"{i}-th run with seed {random_seed}")
         args.random_seed = random_seed
         logger.info(args)
         test_acc = train(args, return_value="test")

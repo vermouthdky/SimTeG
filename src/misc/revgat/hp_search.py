@@ -401,6 +401,7 @@ def parse_args():
     argparser.add_argument("--ckpt_dir", type=str)
     argparser.add_argument("--output_dir", type=str)
     argparser.add_argument("--label_smoothing_factor", type=float, default=0.3)
+    argparser.add_argument("--load_study", action="store_true")
     args = argparser.parse_args()
     return args
 
@@ -473,14 +474,20 @@ def objective(trial):
 
 def main():
     args = parse_args()
-    study = optuna.create_study(
-        direction="maximize",
-        storage="sqlite:///optuna.db",
-        study_name=f"ogbn-arxiv_revgat_{args.suffix}",
-        load_if_exists=True,
-        pruner=optuna.pruners.SuccessiveHalvingPruner(),
-    )
-    study.optimize(objective, n_trials=100)
+    if not args.load_study:
+        study = optuna.create_study(
+            direction="maximize",
+            storage="sqlite:///optuna.db",
+            study_name=f"ogbn-arxiv_revgat_{args.suffix}",
+            load_if_exists=True,
+            pruner=optuna.pruners.SuccessiveHalvingPruner(),
+        )
+        study.optimize(objective, n_trials=100)
+    else:
+        study = optuna.load_study(
+            storage="sqlite:///optuna.db",
+            study_name=f"ogbn-arxiv_revgat_{args.suffix}",
+        )
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
     complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
 

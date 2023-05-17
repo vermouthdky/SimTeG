@@ -26,13 +26,21 @@ class GNN_HP_search(HP_search):
 
 class LM_HP_search(HP_search):
     def setup_search_space(self, args, trial):
-        args.epochs = trial.suggest_int("epochs", 4, 10)
         args.lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
         args.weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
         args.label_smoothing = trial.suggest_float("label_smoothing", 0.1, 0.7)
         args.accum_interval = trial.suggest_categorical("accum_interval", [1, 5, 10])
         args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.5)
         args.warmup_ratio = trial.suggest_float("warmup_ratio", 0.1, 0.5)
+        return args
+
+
+class PEFT_LM_HP_search(HP_search):
+    def setup_search_space(self, args, trial):
+        args.peft_r = trial.suggest_categorical("peft_r", [1, 2, 4, 8])
+        args.peft_lora_alpha = trial.suggest_categorical("peft_lora_alpha", [4, 8, 16, 32])
+        args.peft_lora_dropout = trial.suggest_float("peft_lora_dropout", 0.1, 0.8)
+        args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.8)
         return args
 
 

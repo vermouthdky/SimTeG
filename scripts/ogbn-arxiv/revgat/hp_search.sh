@@ -2,10 +2,19 @@ dataset=ogbn-arxiv
 model=revgat
 lm_model_types=(all-MiniLM-L6-v2 all-mpnet-base-v2 all-roberta-large-v1 e5-large)
 
+# for i in 0 1 2 3; do
+#     suffix=optuna_X_${lm_model_types[$i]}
+#     echo $suffix
+
+#     python -m src.misc.revgat.hp_search \
+#         --load_study \
+#         --suffix $suffix
+# done
+
 for i in 0 1 2 3; do
     lm_model_type=${lm_model_types[i]}
 
-    suffix=optuna_X_${lm_model_type}
+    suffix=optuna_X_${lm_model_type}_peft
 
     output_dir=out/${dataset}/${model}/${suffix}
     ckpt_dir=${output_dir}/ckpt
@@ -13,7 +22,7 @@ for i in 0 1 2 3; do
     mkdir -p ${output_dir}
     mkdir -p ${ckpt_dir}
 
-    bert_x_dir=out/${dataset}/${lm_model_type}/optuna/best/cached_embs/x_embs.pt
+    bert_x_dir=out/${dataset}/${lm_model_type}/optuna_peft/best/cached_embs/x_embs.pt
 
     python -m src.misc.revgat.hp_search \
         --use-norm \

@@ -12,4 +12,9 @@
         "editor.defaultFormatter": "ms-python.black-formatter"
     },
     "python.formatting.provider": "none",
+    "sync-rsync.exclude": [
+        ".git",
+        ".vscode",
+        "data"
+    ],
 }
