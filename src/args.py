@@ -14,6 +14,7 @@ def parse_args():
     parser.add_argument("--mode", type=str, default="train", choices=["train", "test", "save_bert_x"])
     parser.add_argument("--single_gpu", type=int, default=0)
     parser.add_argument("--random_seed", type=int, default=0)
+    parser.add_argument("--start_seed", type=int, default=42)
     parser.add_argument("--cont", type=bool, default=False)
     parser.add_argument("--local_rank", type=int)
     parser.add_argument("--suffix", type=str, default="main")
@@ -137,24 +138,24 @@ def _post_init(args):
 def _set_lm_and_gnn_type(args):
     if args.model_type in ["Deberta", "DebertaV3", "Roberta"]:
         args.lm_type = args.model_type
-    elif args.model_type in ["GAMLP", "SAGN", "SIGN"]:
+    elif args.model_type in ["GAMLP", "SAGN", "SIGN", "SGC"]:
         args.gnn_type = args.model_type
     return args
 
 
 def _set_pretrained_repo(args):
     dict = {
-        "Deberta": ["microsoft/deberta-base", "microsoft/deberta-large"],
-        "DebertaV3": ["microsoft/deberta-v3-base", "microsoft/deberta-v3-large"],
-        "Roberta": ["roberta-base", "roberta-large"],
-        "all-roberta-large-v1": ["sentence-transformers/all-roberta-large-v1"],
-        "all-mpnet-base-v2": ["sentence-transformers/all-mpnet-base-v2"],
-        "all-MiniLM-L6-v2": ["sentence-transformers/all-MiniLM-L6-v2"],
-        "e5-large": ["intfloat/e5-large"],
+        # "Deberta": ["microsoft/deberta-base", "microsoft/deberta-large"],
+        # "DebertaV3": ["microsoft/deberta-v3-base", "microsoft/deberta-v3-large"],
+        # "Roberta": ["roberta-base", "roberta-large"],
+        "all-roberta-large-v1": "sentence-transformers/all-roberta-large-v1",
+        "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
+        "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
+        "e5-large": "intfloat/e5-large",
     }
 
     if args.model_type in dict.keys():
-        assert args.pretrained_repo in dict[args.model_type]
+        args.pretrained_repo = dict[args.model_type]
     else:
         assert args.lm_type in dict.keys()
         # assert args.pretrained_repo in dict[args.lm_type]

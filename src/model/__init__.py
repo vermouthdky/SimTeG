@@ -1,5 +1,5 @@
 from .gbert.gbert_modeling import GBert
-from .gnns.gnn_modeling import GAMLP, SAGN, SIGN
+from .gnns.gnn_modeling import GAMLP, SAGN, SGC, SIGN, GraphSAGE
 from .lms.lm_modeling import (
     AdapterDeberta,
     AdapterRoberta,
@@ -12,7 +12,8 @@ from .lms.lm_modeling import (
 
 def get_model_class(model: str, use_adapter: bool = False):
     model_class = {
-        "GBert": GBert,
+        "GraphSAGE": GraphSAGE,
+        "SGC": SGC,
         "SAGN": SAGN,
         "GAMLP": GAMLP,
         "SIGN": SIGN,

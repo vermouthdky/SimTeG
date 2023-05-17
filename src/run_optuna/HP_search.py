@@ -26,8 +26,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 def save_best_trial(study, trial, output_dir):  # call back
     best_value = study.best_trial.value if study.best_trial is not None else 0.0
     cur_val = trial.value
-    if cur_val is not None and cur_val > best_value:
+    if cur_val is not None and cur_val >= best_value:  # cur_value == best_trial.value
         best_output_dir = os.path.join(output_dir, "best")
+        logger.warning("save the output of best trial to {}".format(best_output_dir))
+        if os.path.exists(best_output_dir):
+            shutil.rmtree(best_output_dir)
         shutil.copytree(output_dir, best_output_dir)
 
 
@@ -37,9 +40,6 @@ class HP_search(ABC):
 
     def objective(self, trial):
         args = self.args
-        rank = int(os.environ["RANK"])
-        args.random_seed = rank
-
         args = self.setup_search_space(args, trial)
         args.optuna = True
         logger.info(args)
@@ -66,7 +66,7 @@ class HP_search(ABC):
 
     def load_study(self):
         args = parse_args()
-        args.random_seed = 0
+        args.random_seed = args.start_seed
         study = optuna.load_study(
             storage="sqlite:///optuna.db",
             study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
@@ -109,9 +109,10 @@ class HP_search(ABC):
                 study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
                 load_if_exists=True,
                 pruner=optuna.pruners.SuccessiveHalvingPruner(),
-                callbacks=[partial(save_best_trial, output_dir=args.output_dir)],
             )
-            study.optimize(self.objective, n_trials=n_trials)
+            study.optimize(
+                self.objective, n_trials=n_trials, callbacks=[partial(save_best_trial, output_dir=args.output_dir)]
+            )
         else:
             for _ in range(n_trials):
                 try:

@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch_geometric.transforms import SIGN, ToSparseTensor
+from torch_geometric.transforms import SIGN
 from tqdm import tqdm
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
@@ -124,29 +124,41 @@ class GNNDecouplingTrainer(Trainer):
             logits_embs = emb_handler.load(logits_name)
             if isinstance(logits_embs, np.ndarray):
                 logits_embs = torch.from_numpy(logits_embs)
-            else:
-                eval_output = self.trainer.predict(dataset)
-                logits_embs = eval_output.predictions
-                logits_embs = torch.from_numpy(logits_embs)
-                emb_handler.save(logits_embs, logits_name)
-                logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
+        else:
+            eval_output = self.trainer.predict(dataset)
+            logits_embs = eval_output.predictions
+            logits_embs = torch.from_numpy(logits_embs)
+            emb_handler.save(logits_embs, logits_name)
+            logger.info(f"save the logits of {self.args.gnn_type} to {os.path.join(embs_path, logits_name)}")
         return (logits_embs, None)
 
-    def _edge_index_to_adj_t(self):
-        self.data = ToSparseTensor()(self.data)
-        deg = self.data.adj_t.sum(dim=1).to(torch.float)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        self.data.adj_t = deg_inv_sqrt.view(-1, 1) * self.data.adj_t * deg_inv_sqrt.view(1, -1)
+    # def _edge_index_to_adj_t(self):
+    #     self.data = ToSparseTensor()(self.data)
+    #     if self.rank == 0:
+    #         __import__("ipdb").set_trace()
+    #     else:
+    #         dist.barrier()
+    #     deg = self.data.adj_t.sum(dim=1).to(torch.float)
+    #     deg_inv_sqrt = deg.pow(-0.5)
+    #     deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+    #     self.data.adj_t = deg_inv_sqrt.view(-1, 1) * self.data.adj_t * deg_inv_sqrt.view(1, -1)
 
     def train(self, return_value="valid"):  # used when only train gnn_models
         # preprocessing
-        self._edge_index_to_adj_t()
-        xs = [self.data.x]
-        disable_tqdm = self.args.disable_tqdm or (is_dist() and int(os.environ["RANK"]) > 0)
-        logger.info("propogating features")
-        for i in tqdm(range(1, self.args.gnn_num_layers + 1), disable=disable_tqdm):
-            xs += [self.data.adj_t @ xs[-1]]
-        xs = xs[1:]  # remove the hop-0 feature, which is saved in self.data.x, this is consistent with gbert
-        self.data.x_emb = torch.cat(xs, dim=-1)
-        super().train(return_value=return_value)
+        # self._edge_index_to_adj_t()
+        # xs = [self.data.x]
+        # disable_tqdm = self.args.disable_tqdm or (is_dist() and int(os.environ["RANK"]) > 0)
+        # logger.info("propogating features")
+        # for i in tqdm(range(1, self.args.gnn_num_layers + 1), disable=disable_tqdm):
+        #     xs += [self.data.adj_t @ xs[-1]]
+        # xs = xs[1:]  # remove the hop-0 feature, which is saved in self.data.x, this is consistent with gbert
+        # self.data.x_emb = torch.cat(xs, dim=-1)
+
+        k = self.args.gnn_num_layers
+        self.data = SIGN(k)(self.data)
+        x_emb = []
+        for i in range(1, k + 1):
+            x_emb.append(self.data[f"x{i}"])
+            del self.data[f"x{i}"]
+        self.data.x_emb = torch.cat(x_emb, dim=-1)
+        return super().train(return_value=return_value)

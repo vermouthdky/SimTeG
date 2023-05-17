@@ -50,12 +50,13 @@ class OgbnProductsWithText(InMemoryDataset):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True) if tokenize else None
         # check if the dataset is already processed with the same tokenizer
         rank = int(os.getenv("RANK", -1))
+        if rank in [0, -1]:  # check the metainfo
+            metainfo = self.load_metainfo()
+            if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
+                logger.critical("The tokenizer is changed. Reprocessing the dataset.")
+                shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
         if rank not in [0, -1]:
             dist.barrier()
-        metainfo = self.load_metainfo()
-        if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
-            logger.info("The tokenizer is changed. Re-processing the dataset.")
-            shutil.rmtree(os.path.join(self.root, "processed"), ignore_errors=True)
         super(OgbnProductsWithText, self).__init__(self.root, transform, pre_transform)
         if rank == 0:
             dist.barrier()

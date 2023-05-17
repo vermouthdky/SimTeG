@@ -6,15 +6,16 @@ from .modules.GAMLP import JK_GAMLP_RLU as PureGAMLPSLE
 from .modules.GraphSAGE import SAGE
 from .modules.SAGN import SAGN as PureSAGN
 from .modules.SAGN import SAGN_SLE as PureSAGNSLE
+from .modules.SGC import SGC as PureSGC
 from .modules.SIGN import SIGN as PureSIGN
 
 
 class SGC(nn.Module):
     def __init__(self, args):
         super(SGC, self).__init__()
-        self.gnn_model = SGC(args.num_feats, args.num_classes)
+        self.gnn_model = PureSGC(args.num_feats, args.num_labels, args.gnn_dropout)
 
-    def __init__(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None)
+    def forward(self, x0: torch.Tensor, x_emb: torch.Tensor, labels=None):
         xs = torch.cat([x0, x_emb], dim=-1)
         return self.gnn_model(xs)
 
@@ -55,7 +56,7 @@ class GAMLP(nn.Module):
 class GraphSAGE(nn.Module):
     def __init__(self, args):
         super(GraphSAGE, self).__init__()
-        self.gnn_model = SAGE(args.num_feats, args.hidden_dim, args.num_classes, args.gnn_num_layers)
+        self.gnn_model = SAGE(args.num_feats, args.hidden_size, args.num_labels, args.gnn_num_layers, args.gnn_dropout)
 
     def forward(self, x, edge_index):
         return self.gnn_model(x, edge_index)

@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore", category=UserWarning)
 # warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
+# to this destination
+
 
 def set_single_env(rank, world_size):
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
@@ -53,6 +55,7 @@ def main(args):
     world_size = int(os.environ["WORLD_SIZE"])
     set_single_env(rank, world_size)
     for random_seed in range(args.n_exps):
+        random_seed += args.start_seed
         set_seed(random_seed)
         logger.critical(f"{random_seed}-th run with seed {random_seed}")
         args.random_seed = random_seed

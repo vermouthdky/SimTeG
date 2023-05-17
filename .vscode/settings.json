@@ -1,9 +1,9 @@
 {
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true,
-    "sync-rsync.remote": "",
-    "sync-rsync.onSave": false,
-    "sync-rsync.onSaveIndividual": false,
+    "sync-rsync.remote": "duanky@lambda:/home/aiops/duanky/gbert/ ",
+    "sync-rsync.onSave": true,
+    "sync-rsync.onSaveIndividual": true,
     "sync-rsync.shell": "",
     "sync-rsync.autoHideOutput": false,
     "sync-rsync.executable": "/usr/bin/rsync",

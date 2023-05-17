@@ -3,7 +3,8 @@ import os
 
 import torch
 import torch.nn.functional as F
-from peft import LoraConfig, TaskType, get_peft_config, get_peft_model
+
+# from peft import LoraConfig, TaskType, get_peft_config, get_peft_model
 from torch import nn
 from transformers import (
     AutoConfig,
@@ -42,7 +43,7 @@ class E5_model(nn.Module):
         config.header_dropout_prob = args.header_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
-        self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config)
+        self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config, add_pooling_layer=False)
         self.head = SentenceClsHead(config)
 
     def average_pool(self, last_hidden_states, attention_mask):  # for E5_model
@@ -51,7 +52,7 @@ class E5_model(nn.Module):
 
     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids, attention_mask=att_mask)
-        sentence_embeddings = self.average_pool(bert_out, att_mask)
+        sentence_embeddings = self.average_pool(bert_out.last_hidden_state, att_mask)
         out = self.head(sentence_embeddings)
 
         if return_hidden:
@@ -74,12 +75,12 @@ class Sentence_Transformer(nn.Module):
         # init modules
         self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config, add_pooling_layer=False)
         self.head = SentenceClsHead(config)
-        if args.use_adapter:
-            lora_config = LoraConfig(
-                task_type=TaskType.SEQ_CLS, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
-            )
-            self.bert_model = get_peft_model(self.bert_model, lora_config)
-            self.bert_model.print_trainable_parameters()
+        # if args.use_adapter:
+        #     lora_config = LoraConfig(
+        #         task_type=TaskType.SEQ_CLS, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
+        #     )
+        #     self.bert_model = get_peft_model(self.bert_model, lora_config)
+        #     self.bert_model.print_trainable_parameters()
 
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]  # First element of model_output contains all token embeddings

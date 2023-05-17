@@ -13,6 +13,7 @@ from tqdm import tqdm
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
 from transformers import TrainingArguments as HugTrainingArguments
+from transformers.trainer_pt_utils import distributed_concat
 
 from ..model import get_model_class
 from ..utils import EmbeddingHandler, is_dist
@@ -30,16 +31,34 @@ class TrainingArguments(HugTrainingArguments):
 class InnerTrainer(HugTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         if "labels" in inputs:
-            labels = inputs.pop("labels")
+            labels = inputs.pop("labels").cuda()
+        elif "y" in inputs:
+            labels = inputs.pop("y").cuda()
         else:
             labels = None
 
-        edge_index, x = inputs.pop("edge_index"), inputs.pop("x")
-        logits = model(**inputs)
+        edge_index, x = inputs.pop("edge_index").cuda(), inputs.pop("x").cuda()
+        logits = model(x, edge_index)[: inputs.batch_size]
+        # if return_outputs:
+        #     if int(os.getenv("RANK", -1)) == 0:
+        #         __import__("ipdb").set_trace()
+        #     else:
+        #         dist.barrier()
 
         loss_op = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing_factor, reduce="mean")
-        loss = loss_op(logits, labels.view(-1))
+        loss = loss_op(logits, labels.view(-1)[: inputs.batch_size])
+
         return (loss, {"logits": logits}) if return_outputs else loss
+
+    def _nested_gather(self, tensors, name=None):
+        """
+        Gather value of `tensors` (tensor or list/tuple of nested tensors) and convert them to numpy before
+        concatenating them to `gathered`
+        """
+        if tensors is None:
+            return
+        tensors = distributed_concat(tensors)
+        return tensors
 
     @property
     def rank(self):
@@ -64,14 +83,13 @@ class InnerTrainer(HugTrainer):
         )
 
     def get_eval_dataloader(self, eval_dataset: Dataset = None) -> DataLoader:
-        eval_idx = eval_dataset.valid_mask.nonzero(as_tuple=False).view(-1)
-        eval_idx = eval_dataset.split(eval_idx.size(0) // self.world_size)[self.rank]
+        # eval_idx = self.train_dataset.valid_mask.nonzero(as_tuple=False).view(-1)
+        # eval_idx = eval_idx.split(eval_idx.size(0) // self.world_size)[self.rank]
         return NeighborLoader(
             self.train_dataset,
             batch_size=self.args.per_device_eval_batch_size,
             num_workers=self.args.dataloader_num_workers,
             persistent_workers=True,
-            input_ndoes=eval_idx,
             num_neighbors=[-1],
             shuffle=False,
             drop_last=False,
@@ -120,12 +138,13 @@ class GNNSamplingTrainer(Trainer):
             local_rank=self.rank,
             dataloader_num_workers=1,
             ddp_find_unused_parameters=False,
+            label_names="y",
         )
         return InnerTrainer(
             model=self.model,
             args=training_args,
             train_dataset=self.data,
-            eval_dataset=self.data,
+            eval_dataset=None,
             compute_metrics=self.compute_metrics,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )

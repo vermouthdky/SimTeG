@@ -6,8 +6,9 @@ from torch_geometric.nn import SAGEConv
 
 
 class SAGE(torch.nn.Module):
-    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_layers: int = 2):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_layers: int, dropout):
         super().__init__()
+        self.dropout_rate = dropout
 
         self.convs = torch.nn.ModuleList()
         self.convs.append(SAGEConv(in_channels, hidden_channels))
@@ -20,7 +21,7 @@ class SAGE(torch.nn.Module):
             x = conv(x, edge_index)
             if i < len(self.convs) - 1:
                 x = x.relu_()
-                x = F.dropout(x, p=0.5, training=self.training)
+                x = F.dropout(x, p=self.dropout_rate, training=self.training)
         return x
 
     @torch.no_grad()
