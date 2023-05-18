@@ -132,7 +132,8 @@ dmypy.json
 .style.yapf
 
 # data files and pretrained files
-data/
 logs/
 pretrained/
 ckpt/
+
+.vscode/
