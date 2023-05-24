@@ -28,7 +28,8 @@ def set_single_env(rank, world_size):
 
 def cleanup():
     torch.cuda.empty_cache()
-    dist.destroy_process_group()
+    if is_dist():
+        dist.destroy_process_group()
     gc.collect()
 
 
@@ -51,9 +52,10 @@ def set_seed(random_seed):
 def main(args):
     set_logging()
     test_acc_list = []
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    set_single_env(rank, world_size)
+    if is_dist():
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        set_single_env(rank, world_size)
     for i, random_seed in enumerate(range(args.n_exps)):
         random_seed += args.start_seed
         set_seed(random_seed)

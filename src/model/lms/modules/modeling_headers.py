@@ -1,7 +1,25 @@
 import torch
+import torch.functional as F
 from torch import nn
 
 from .modeling_adapter_deberta import ContextPooler, StableDropout
+
+
+class LinkPredHead(nn.Module):
+    def __init__(self, config):
+        super(LinkPredHead, self).__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        dropout = config.header_dropout_prob if config.header_dropout_prob is not None else config.hidden_dropout_prob
+        self.dropout = nn.Dropout(dropout)
+        self.out_proj = nn.Linear(config.hidden_size, 1)
+
+    def forward(self, x_i, x_j):
+        x = x_i * x_j
+        x = self.dense(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return torch.sigmoid(x)
 
 
 class SentenceClsHead(nn.Module):

@@ -15,25 +15,23 @@ from torch_geometric.data import InMemoryDataset
 from torch_geometric.transforms import ToSparseTensor
 from transformers import AutoTokenizer
 
-from ..utils import is_dist
+from ..utils import dist_barrier_context, is_dist, set_logging
+from .ogb_with_text import OgbWithText
 
 logger = logging.getLogger(__name__)
 
 
-class OgbnArxivWithText(InMemoryDataset):
+class OgbnArxivWithText(OgbWithText):
     def __init__(
         self,
         root="data",
         transform=None,
         pre_transform=None,
-        tokenizer="microsoft/deberta-base",
+        tokenizer="sentence-transformers/all-MiniLM-L6-v2",
         tokenize=True,
     ):
-        self.name = "ogbn-arxiv"  ## original name, e.g., ogbn-proteins
-        self.dir_name = "_".join(self.name.split("-"))
-        self.original_root = root
-        self.root = osp.join(root, self.dir_name)
-        self.meta = {
+        name = "ogbn-arxiv-text"  ## original name, e.g., ogbn-proteins
+        meta_info = {
             "download_name": "arxiv",
             "num_tasks": 1,
             "task_type": "multiclass classification",
@@ -48,23 +46,7 @@ class OgbnArxivWithText(InMemoryDataset):
             "text_url": "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz",
             "tokenizer": tokenizer,
         }
-        self.should_tokenize = tokenize
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, use_fast=True) if tokenize else None
-        # check if the dataset is already processed with the same tokenizer
-        rank = int(os.getenv("RANK", -1))
-        if rank in [0, -1]:  # check the metainfo
-            metainfo = self.load_metainfo()
-            if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
-                logger.critical("The tokenizer is changed. Reprocessing the dataset.")
-                shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
-        if rank not in [0, -1]:  # process data on main rank
-            dist.barrier()
-        super(OgbnArxivWithText, self).__init__(self.root, transform, pre_transform)
-        if rank == 0:
-            dist.barrier()
-        if rank in [0, -1] and tokenize:
-            self.save_metainfo()
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        super(OgbnArxivWithText, self).__init__(name, meta_info, root, transform, pre_transform, tokenizer, tokenize)
 
     def get_idx_split(self):
         split_type = "time"
@@ -89,7 +71,7 @@ class OgbnArxivWithText(InMemoryDataset):
 
     @property
     def num_classes(self):
-        return self.meta["num_classes"]
+        return self.meta_info["num_classes"]
 
     @property
     def raw_file_names(self):
@@ -102,20 +84,20 @@ class OgbnArxivWithText(InMemoryDataset):
         return osp.join("geometric_data_processed.pt")
 
     def download(self):
-        path = download_url(self.meta["graph_url"], self.original_root)
+        path = download_url(self.meta_info["graph_url"], self.original_root)
         extract_zip(path, self.original_root)
-        text_path = download_url(self.meta["text_url"], osp.join(self.original_root, "arxiv/raw"))
+        text_path = download_url(self.meta_info["text_url"], osp.join(self.original_root, "arxiv/raw"))
         os.unlink(path)
         shutil.rmtree(self.root)
-        shutil.move(osp.join(self.original_root, self.meta["download_name"]), self.root)
+        shutil.move(osp.join(self.original_root, self.meta_info["download_name"]), self.root)
 
     def process(self):
         data = read_graph_pyg(
             self.raw_dir,
-            add_inverse_edge=self.meta["add_inverse_edge"],
-            additional_node_files=self.meta["additional_node_files"],
-            additional_edge_files=self.meta["additional_edge_files"],
-            binary=self.meta["binary"],
+            add_inverse_edge=self.meta_info["add_inverse_edge"],
+            additional_node_files=self.meta_info["additional_node_files"],
+            additional_edge_files=self.meta_info["additional_edge_files"],
+            binary=self.meta_info["binary"],
         )[0]
         ### adding prediction target
         node_label = pd.read_csv(
@@ -131,10 +113,6 @@ class OgbnArxivWithText(InMemoryDataset):
             data.y = torch.from_numpy(node_label).to(torch.long)
 
         data = data if self.pre_transform is None else self.pre_transform(data)
-        if self.should_tokenize:
-            text_encoding = self._mapping_and_tokenizing()
-            data.input_ids = text_encoding.input_ids
-            data.attention_mask = text_encoding.attention_mask
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
 
@@ -159,34 +137,19 @@ class OgbnArxivWithText(InMemoryDataset):
         df = df.drop(columns=["title", "abstract"])
         df = df.astype({"paper id": np.int64, "abstitle": str})
         df = df_mapping.merge(df, how="inner", on="paper id")
+        logger.info("tokenizing...")
         text_encoding = self.tokenizer(
             df["abstitle"].values.tolist(),
             padding=True,
             truncation=True,
             return_tensors="pt",
         )
-        return text_encoding
-
-    def save_metainfo(self):
-        w_path = osp.join(self.root, "processed/meta_info.json")
-        with open(w_path, "w") as outfile:
-            json.dump(self.meta, outfile)
-
-    def load_metainfo(self):
-        r_path = osp.join(self.root, "processed/meta_info.json")
-        if not osp.exists(r_path):
-            return None
-        return json.loads(open(r_path).read())
-        # with open(r_path, "r") as infile:
-        #     json_obj = json.load(infile)
-        # return json_obj
-
-    def __repr__(self):
-        return "{}()".format(self.__class__.__name__)
+        return text_encoding.input_ids, text_encoding.attention_mask
 
 
 if __name__ == "__main__":
-    pyg_dataset = OgbnArxivWithText()
+    set_logging()
+    pyg_dataset = OgbnArxivWithText("../data")
     print(pyg_dataset[0])
     split_index = pyg_dataset.get_idx_split()
     print(split_index)

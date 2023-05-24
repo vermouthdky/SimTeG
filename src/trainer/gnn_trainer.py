@@ -6,9 +6,11 @@ import shutil
 
 import evaluate
 import numpy as np
+import optuna
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch_geometric.loader import NeighborLoader
 from torch_geometric.transforms import SIGN
 from tqdm import tqdm
 from transformers import EarlyStoppingCallback
@@ -162,3 +164,116 @@ class GNNDecouplingTrainer(Trainer):
             del self.data[f"x{i}"]
         self.data.x_emb = torch.cat(x_emb, dim=-1)
         return super().train(return_value=return_value)
+
+
+class GNNSamplingTrainer:  # single gpu
+    def __init__(self, args, data, split_idx, evaluator, **kwargs):
+        self.args = args
+        self.data = data
+        self.split_idx = split_idx
+        self.evaluator = evaluator
+        self.trial = kwargs.pop("trial", None)
+
+    @property
+    def device(self):
+        return torch.device(self.args.single_gpu if torch.cuda.is_available() else "cpu")
+
+    def _prepare_model(self):
+        assert self.args.model_type in ["GraphSAGE", "GCN"]
+        model_class = get_model_class(self.args.model_type, self.args.task_type)
+        return model_class(self.args)
+
+    def _prepare_dataloader(self):
+        # return train_loader and subgraph_loader
+        train_loader = NeighborLoader(
+            self.data,
+            input_nodes=self.split_idx["train"],
+            num_neighbors=[25 for _ in range(self.args.gnn_num_layers)],
+            batch_size=self.args.gnn_batch_size,
+            shuffle=True,
+            num_workers=12,
+            persistent_workers=True,
+        )
+        subgraph_loader = NeighborLoader(
+            self.data,
+            input_nodes=None,
+            num_neighbors=[-1],
+            batch_size=self.args.gnn_eval_batch_size,
+            num_workers=12,
+            persistent_workers=True,
+        )
+        return train_loader, subgraph_loader
+
+    def _prepare_optimizer(self):
+        return torch.optim.Adam(self.model.parameters(), lr=self.args.gnn_lr, weight_decay=self.args.gnn_weight_decay)
+
+    def training_step(self, epoch):
+        self.model.train()
+
+        total_loss = total_correct = 0
+        for batch in self.train_loader:
+            self.optimizer.zero_grad()
+            out = self.model(batch.x.to(self.device), batch.edge_index.to(self.device))[: batch.batch_size]
+            y = batch.y[: batch.batch_size].squeeze().to(self.device)
+            loss = F.cross_entropy(out, y, label_smoothing=self.args.gnn_label_smoothing)
+            loss.backward()
+            self.optimizer.step()
+
+            total_loss += float(loss)
+            total_correct += int(out.argmax(dim=-1).eq(y).sum())
+
+        loss = total_loss / len(self.train_loader)
+        approx_acc = total_correct / self.split_idx["train"].size(0)
+
+        return loss, approx_acc
+
+    @torch.no_grad()
+    def eval(self):
+        self.model.eval()
+        out = self.model.inference(self.data.x, self.device, self.subgraph_loader)
+        y_true = self.data.y.cpu()
+        y_pred = out.argmax(dim=-1, keepdim=True)
+
+        train_acc = self.evaluator.eval(
+            {
+                "y_true": y_true[self.split_idx["train"]],
+                "y_pred": y_pred[self.split_idx["train"]],
+            }
+        )["acc"]
+        val_acc = self.evaluator.eval(
+            {
+                "y_true": y_true[self.split_idx["valid"]],
+                "y_pred": y_pred[self.split_idx["valid"]],
+            }
+        )["acc"]
+        test_acc = self.evaluator.eval(
+            {
+                "y_true": y_true[self.split_idx["test"]],
+                "y_pred": y_pred[self.split_idx["test"]],
+            }
+        )["acc"]
+
+        return train_acc, val_acc, test_acc
+
+    def train(self, return_value="valid"):
+        self.model = self._prepare_model()
+        self.model.to(self.device)
+        self.model.reset_parameters()
+        self.train_loader, self.subgraph_loader = self._prepare_dataloader()
+        self.optimizer = self._prepare_optimizer()
+        best_val_acc = final_test_acc = 0
+        for epoch in range(1, self.args.epochs + 1):
+            loss, acc = self.training_step(epoch)
+            logger.info(f"Epoch {epoch:02d}, Loss: {loss:.4f}, Train Acc: {acc:.4f}")
+            if epoch > 5:
+                train_acc, val_acc, test_acc = self.eval()
+                logger.info(f"Epoch: {epoch:02d} Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}")
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    final_test_acc = test_acc
+                if self.trial is not None:
+                    self.trial.report(val_acc, epoch)
+                    if self.trial.should_prune():
+                        raise optuna.exceptions.TrialPruned()
+        logger.info(f"best_val_acc: {best_val_acc:.4f}, final_test_acc: {final_test_acc:.4f}")
+        return best_val_acc if return_value == "valid" else final_test_acc

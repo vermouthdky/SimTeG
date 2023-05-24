@@ -1,8 +1,12 @@
+from typing import Optional
+
 import torch
 from torch import nn
+from torch.nn.parameter import Parameter
 
 from .modules.GAMLP import JK_GAMLP as PureGAMLP
 from .modules.GAMLP import JK_GAMLP_RLU as PureGAMLPSLE
+from .modules.GCN import GCN as PureGCN
 from .modules.GraphSAGE import SAGE
 from .modules.SAGN import SAGN as PureSAGN
 from .modules.SAGN import SAGN_SLE as PureSAGNSLE
@@ -58,9 +62,30 @@ class GraphSAGE(nn.Module):
         super(GraphSAGE, self).__init__()
         self.gnn_model = SAGE(args.num_feats, args.hidden_size, args.num_labels, args.gnn_num_layers, args.gnn_dropout)
 
+    def reset_parameters(self):
+        self.gnn_model.reset_parameters()
+
     def forward(self, x, edge_index):
         return self.gnn_model(x, edge_index)
 
-    # @torch.no_grad()
-    # def inference(self, x_all, device, subgraph_loader):
-    #     return self.gnn_model.inference(x_all, device, subgraph_loader)
+    @torch.no_grad()
+    def inference(self, x_all, device, subgraph_loader):
+        return self.gnn_model.inference(x_all, device, subgraph_loader)
+
+
+class GCN(nn.Module):
+    def __init__(self, args):
+        super(GCN, self).__init__()
+        self.gnn_model = PureGCN(
+            args.num_feats, args.hidden_size, args.num_labels, args.gnn_num_layers, args.gnn_dropout
+        )
+
+    def reset_parameters(self):
+        self.gnn_model.reset_parameters()
+
+    def forward(self, x, edge_index):
+        return self.gnn_model(x, edge_index)
+
+    @torch.no_grad()
+    def inference(self, x_all, device, subgraph_loader):
+        return self.gnn_model.inference(x_all, device, subgraph_loader)

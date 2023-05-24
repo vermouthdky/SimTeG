@@ -13,7 +13,7 @@ from torch_geometric.transforms import ToSparseTensor
 from tqdm import tqdm
 
 from ..utils import is_dist, mkdirs_if_not_exists
-from .gnn_decoupling_trainer import GNNDecouplingTrainer as GNNTrainer
+from .gnn_trainer import GNNDecouplingTrainer as GNNTrainer
 from .lm_trainer import LMTrainer
 
 logger = logging.getLogger(__name__)

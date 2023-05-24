@@ -1,11 +1,16 @@
+import gc
 import logging
-import os
 import warnings
+from functools import partial
 
+import optuna
 import torch
 from optuna.exceptions import ExperimentalWarning
+from optuna.trial import TrialState
 
-from .HP_search import HP_search
+from main import set_seed
+
+from .HP_search import HP_search, save_best_trial
 
 logger = logging.getLogger(__name__)
 # optuna.logging.set_verbosity(optuna.logging.ERROR)
@@ -13,7 +18,7 @@ warnings.filterwarnings("ignore", category=ExperimentalWarning, module="optuna.m
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-class GNN_HP_search(HP_search):
+class Decoupling_GNN_HP_search(HP_search):
     def setup_search_space(self, args, trial):
         args.gnn_lr = trial.suggest_float("gnn_lr", 1e-5, 1e-2, log=True)
         args.gnn_weight_decay = trial.suggest_float("gnn_weight_decay", 1e-7, 1e-4, log=True)
@@ -42,6 +47,61 @@ class PEFT_LM_HP_search(HP_search):
         args.peft_lora_dropout = trial.suggest_float("peft_lora_dropout", 0.1, 0.8)
         args.header_dropout_prob = trial.suggest_float("header_dropout_prob", 0.1, 0.8)
         return args
+
+
+class Sampling_GNN_HP_search(HP_search):
+    def objective(self, trial):
+        args = self.args
+        args = self.setup_search_space(args, trial)
+        args.optuna = True
+        logger.info(args)
+        best_acc = self.train(args, trial=trial)
+        return best_acc
+
+    def setup_search_space(self, args, trial):
+        args.gnn_lr = trial.suggest_float("gnn_lr", 1e-4, 1e-2, log=True)
+        args.gnn_weight_decay = trial.suggest_float("gnn_weight_decay", 1e-7, 1e-4, log=True)
+        args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
+        args.gnn_label_smoothing = trial.suggest_float("gnn_label_smoothing", 0.1, 0.7)
+        args.gnn_num_layers = trial.suggest_int("gnn_num_layers", 2, 4)
+        return args
+
+    def run(self, n_trials):
+        # run
+        args = self.args
+        args.random_seed = args.start_seed
+        set_seed(random_seed=args.random_seed)
+
+        study = optuna.create_study(
+            direction="maximize",
+            storage="sqlite:///optuna.db",
+            study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
+            load_if_exists=True,
+            pruner=optuna.pruners.SuccessiveHalvingPruner(),
+        )
+        study.optimize(
+            self.objective, n_trials=n_trials, callbacks=[partial(save_best_trial, output_dir=args.output_dir)]
+        )
+        assert study is not None
+        pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+        complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+        logger.info("Study statistics: ")
+        logger.info("  Number of finished trials: {}".format(len(study.trials)))
+        logger.info("  Number of pruned trials: {}".format(len(pruned_trials)))
+        logger.info("  NUmber of complete trials: {}".format(len(complete_trials)))
+
+        logger.info("Best trial:")
+        trial = study.best_trial
+
+        logger.info("  Value: {}".format(trial.value))
+
+        logger.info("  Params: ")
+        for key, value in trial.params.items():
+            logger.info("    {}: {}".format(key, value))
+
+        torch.cuda.empty_cache()
+        gc.collect()
 
 
 # class GBert_HP_search(HP_search):

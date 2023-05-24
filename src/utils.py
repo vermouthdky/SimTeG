@@ -1,12 +1,23 @@
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from typing import List, Union
 
 import colorlog
 import torch
 import torch.distributed as dist
+
+
+@contextmanager
+def dist_barrier_context():
+    rank = int(os.getenv("RANK", -1))
+    if rank not in [0, -1]:
+        dist.barrier()
+    yield
+    if rank == 0:
+        dist.barrier()
 
 
 def mkdirs_if_not_exists(path: str):

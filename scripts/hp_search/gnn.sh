@@ -5,7 +5,7 @@ suffix=$4
 
 bert_x_dir=out/${dataset}/${lm_model_type}/${suffix}/best/cached_embs/x_embs.pt
 
-suffix=optuna_on_X_${lm_model_type}
+suffix=${suffix}_on_X_${lm_model_type}
 bash scripts/optuna.sh --model_type $gnn_model_type --dataset $dataset --suffix $suffix \
     --lm_type $lm_model_type \
     --gnn_eval_interval 5 \

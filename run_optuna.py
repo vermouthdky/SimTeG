@@ -7,7 +7,12 @@ import warnings
 from optuna.exceptions import ExperimentalWarning
 
 from src.args import parse_args
-from src.run_optuna.search_space import GNN_HP_search, LM_HP_search, PEFT_LM_HP_search
+from src.run_optuna.search_space import (
+    Decoupling_GNN_HP_search,
+    LM_HP_search,
+    PEFT_LM_HP_search,
+    Sampling_GNN_HP_search,
+)
 from src.utils import set_logging
 
 logger = logging.getLogger(__name__)
@@ -25,8 +30,10 @@ def get_search_instance(model_type, use_peft=False):
         "e5-large",
     ]:
         return PEFT_LM_HP_search if use_peft else LM_HP_search
-    elif model_type in ["GAMLP", "SAGN", "SGC", "GraphSAGE"]:
-        return GNN_HP_search
+    elif model_type in ["GAMLP", "SAGN", "SGC"]:
+        return Decoupling_GNN_HP_search
+    elif model_type in ["GraphSAGE", "GCN"]:
+        return Sampling_GNN_HP_search
     else:
         raise NotImplementedError("not implemented HP search class")
 

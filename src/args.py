@@ -7,6 +7,14 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+LM_LIST = ["all-roberta-large-v1", "all-mpnet-base-v2", "all-MiniLM-L6-v2", "e5-large"]
+GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN"]
+SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
+DECOUPLING_GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC"]
+
+LINK_PRED_DATASETS = ["ogbl-citation2"]
+NODE_CLS_DATASETS = ["ogbn-arxiv", "ogbn-products"]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -21,9 +29,10 @@ def parse_args():
     parser.add_argument("--n_exps", type=int, default=1)
 
     # parameters for data and model storage
-    parser.add_argument("--data_folder", type=str, default="../textual_ogb")
+    parser.add_argument("--data_folder", type=str, default="../data")
     parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--model_type", type=str, default="GBert")
+    parser.add_argument("--task_type", type=str, default="node_cls")
     parser.add_argument("--output_dir", type=str)  # output dir
     parser.add_argument("--ckpt_dir", type=str)  # ckpt path to save
     parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
@@ -122,10 +131,11 @@ def parse_args():
 
 
 def save_args(args, dir):
-    FILE_NAME = "args.json"
-    with open(os.path.join(dir, FILE_NAME), "w") as f:
-        json.dump(args.__dict__, f, indent=2)
-    logger.info("args saved to {}".format(os.path.join(dir, FILE_NAME)))
+    if int(os.getenv("RANK", -1)) <= 0:
+        FILE_NAME = "args.json"
+        with open(os.path.join(dir, FILE_NAME), "w") as f:
+            json.dump(args.__dict__, f, indent=2)
+        logger.info("args saved to {}".format(os.path.join(dir, FILE_NAME)))
 
 
 def load_args(dir):
@@ -142,18 +152,15 @@ def _post_init(args):
 
 
 def _set_lm_and_gnn_type(args):
-    if args.model_type in ["Deberta", "DebertaV3", "Roberta"]:
+    if args.model_type in LM_LIST:
         args.lm_type = args.model_type
-    elif args.model_type in ["GAMLP", "SAGN", "SIGN", "SGC"]:
+    elif args.model_type in GNN_LIST:
         args.gnn_type = args.model_type
     return args
 
 
 def _set_pretrained_repo(args):
     dict = {
-        # "Deberta": ["microsoft/deberta-base", "microsoft/deberta-large"],
-        # "DebertaV3": ["microsoft/deberta-v3-base", "microsoft/deberta-v3-large"],
-        # "Roberta": ["roberta-base", "roberta-large"],
         "all-roberta-large-v1": "sentence-transformers/all-roberta-large-v1",
         "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
         "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
@@ -173,16 +180,19 @@ def _set_dataset_specific_args(args):
         args.num_labels = 40
         args.num_feats = 128
         args.expected_valid_acc = 0.6
+        args.task_type = "node_cls"
 
     elif args.dataset == "ogbn-products":
         args.num_labels = 47
         args.num_feats = 100
         args.expected_valid_acc = 0.8
+        args.task_type = "node_cls"
+
+    elif args.dataset == "ogbl-citation2":
+        args.num_feats = 128
+        args.task_type = "link_pred"
 
     hidden_size_dict = {
-        "Deberta": 768,
-        "DebertaV3": 768,
-        "Roberta": 768,
         "all-roberta-large-v1": 1024,
         "all-mpnet-base-v2": 768,
         "all-MiniLM-L6-v2": 384,

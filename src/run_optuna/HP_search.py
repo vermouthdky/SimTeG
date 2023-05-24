@@ -50,7 +50,7 @@ class HP_search(ABC):
     def train(self, args, trial=None):
         data, split_idx, evaluator, processed_dir = load_data(args)
         # trainer
-        Trainer = get_trainer_class(args.model_type)
+        Trainer = get_trainer_class(args)
         trainer = Trainer(args, data, split_idx, evaluator, trial=trial)
         best_acc = trainer.train()
         del trainer, data, split_idx, evaluator
@@ -94,7 +94,7 @@ class HP_search(ABC):
     def run(self, n_trials):
         # run
         args = self.args
-        args.random_seed = 0
+        args.random_seed = args.start_seed
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
         dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)

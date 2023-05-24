@@ -75,7 +75,7 @@ class Trainer(ABC):
         model.load_state_dict(ckpt, strict=False)
 
     def _prepare_model(self):
-        model_class = get_model_class(self.args.model_type, self.args.use_adapter)
+        model_class = get_model_class(self.args.model_type, self.args.task_type)
         model = model_class(self.args)
         n_params = sum(p.numel() for p in model.parameters())
         logger.warning(f"Model: {self.args.model_type}, Num of Params: {n_params}")
