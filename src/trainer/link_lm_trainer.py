@@ -6,6 +6,7 @@ import evaluate
 import numpy as np
 import torch
 import torch.distributed as dist
+from torch.utils.data import DataLoader
 from torch_geometric.utils import subgraph
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
@@ -41,14 +42,19 @@ class Dataset(torch.utils.data.Dataset):
         batch_data = {
             "input_ids": self.data["input_ids"][index],
             "att_mask": self.data["att_mask"][index],
-            "edge_index": subgraph(index, self.data["edge_index"], relabel_nodes=True),
         }
+        if self.data["edge_index"] is not None:
+            batch_data["edge_index"] = subgraph(torch.tensor(index), self.data["edge_index"], relabel_nodes=True)
         return batch_data
 
 
 class InnerTrainer(HugTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         eps = 1e-15
+        if self.args.local_rank <= 0:
+            __import__("ipdb").set_trace()
+        else:
+            dist.barrier()
         input_ids = inputs.pop("input_ids")
         att_mask = inputs.pop("att_mask")
         edge_index = inputs.pop("edge_index")
@@ -72,19 +78,33 @@ class InnerTrainer(HugTrainer):
             outputs = {"hidden_features": h}
         return (loss, outputs) if return_outputs else loss
 
+    def get_train_dataloader(self) -> DataLoader:
+        train_set = torch.arange(self.train_set)
+        return DataLoader(
+            train_set,
+            batch_size=self._train_batch_size,
+            sampler=self._get_train_sampler(),
+            drop_last=self.args.dataloader_drop_last,
+            num_workers=self.args.dataloader_num_workers,
+            pin_memory=self.args.dataloader_pin_memory,
+        )
+
 
 class LinkLMTrainer(Trainer):
-    def _get_dataset(self, mode):
-        assert mode in ["train", "valid", "test", "all"]
-        if self.rank == 0:
-            __import__("ipdb").set_trace()
-        else:
-            torch.distributed.barrier()
-        dataset = Dataset(self.data.input_ids, self.data.attention_mask, self.data.y)
-        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
+    # def _get_dataset(self, mode):
+    #     assert mode in ["train", "valid", "test", "all"]
+    #     src, dst = self.split_idx[mode]["source_node"], self.split_idx[mode]["target_node"]
+    #     edge_index = torch.stack([src, dst], dim=0) if mode != "all" else None
+    #     if self.rank == 0:
+    #         __import__("ipdb").set_trace()
+    #     else:
+    #         dist.barrier()
+    #     dataset = Dataset(self.data.input_ids, self.data.attention_mask, edge_index)
+    #     return dataset
 
     def _prepare_dataset(self):
-        return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
+        # return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
+        return self.data, self.data, self.data
 
     def _prepare_trainer(self):
         # prepare training args
@@ -118,6 +138,7 @@ class LinkLMTrainer(Trainer):
             local_rank=self.rank,
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
+            label_names=["edge_index"],
         )
         return InnerTrainer(
             model=self.model,

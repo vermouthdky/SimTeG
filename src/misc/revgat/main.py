@@ -359,6 +359,7 @@ def parse_args():
     argparser = argparse.ArgumentParser(
         "GAT implementation on ogbn-arxiv", formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
+    argparser.add_argument("--suffix", type=str)
     argparser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     argparser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     argparser.add_argument("--seed", type=int, default=0, help="seed")

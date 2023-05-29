@@ -48,15 +48,15 @@ class HP_search(ABC):
         return best_acc
 
     def train(self, args, trial=None):
-        data, split_idx, evaluator, processed_dir = load_data(args)
+        data, split_idx, evaluator = load_data(args)
         # trainer
         Trainer = get_trainer_class(args)
         trainer = Trainer(args, data, split_idx, evaluator, trial=trial)
-        best_acc = trainer.train()
+        test_acc, valid_acc = trainer.train()
         del trainer, data, split_idx, evaluator
         torch.cuda.empty_cache()
         gc.collect()
-        return best_acc
+        return test_acc
 
     @abstractmethod
     def setup_search_space(self, args, trial):

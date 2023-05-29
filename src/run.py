@@ -48,6 +48,11 @@ def load_data(args):
         assert bert_x.size(0) == data.x.size(0)
         logger.warning(f"using bert x loaded from {args.bert_x_dir}")
         data.x = bert_x
+    elif args.use_giant_x:
+        giant_x = torch.from_numpy(np.load(args.giant_x_dir))
+        assert giant_x.size(0) == data.x.size(0)
+        logger.warning(f"using giant x loaded from {args.giant_x_dir}")
+        data.x = giant_x
 
     if args.debug:
         all_idx = torch.arange(0, 3000)

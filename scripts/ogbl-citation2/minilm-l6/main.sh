@@ -12,6 +12,7 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --epochs 10 \
     --warmup_ratio 0.15 \
     --lr_scheduler_type linear \
+    --use_peft \
     --debug
 
 # lm_type=${model_type}

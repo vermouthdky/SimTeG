@@ -63,7 +63,7 @@ class Sampling_GNN_HP_search(HP_search):
         args.gnn_weight_decay = trial.suggest_float("gnn_weight_decay", 1e-7, 1e-4, log=True)
         args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
         args.gnn_label_smoothing = trial.suggest_float("gnn_label_smoothing", 0.1, 0.7)
-        args.gnn_num_layers = trial.suggest_int("gnn_num_layers", 2, 4)
+        args.gnn_num_layers = trial.suggest_int("gnn_num_layers", 2, 3)
         return args
 
     def run(self, n_trials):

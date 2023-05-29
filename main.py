@@ -52,6 +52,7 @@ def set_seed(random_seed):
 def main(args):
     set_logging()
     test_acc_list = []
+    val_acc_list = []
     if is_dist():
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
@@ -62,9 +63,13 @@ def main(args):
         logger.critical(f"{i}-th run with seed {random_seed}")
         args.random_seed = random_seed
         logger.info(args)
-        test_acc = train(args, return_value="test")
+        test_acc, val_acc = train(args, return_value="test")
         test_acc_list.append(test_acc)
+        val_acc_list.append(val_acc)
+        logger.warning(f"current val_acc {np.mean(val_acc_list)} ± {np.std(val_acc_list)}")
+        logger.warning(f"current test_acc {np.mean(test_acc_list)} ± {np.std(test_acc_list)}")
     cleanup()
+    logger.critical(f"final val_acc {np.mean(val_acc_list)} ± {np.std(val_acc_list)}")
     logger.critical(f"final test_acc {np.mean(test_acc_list)} ± {np.std(test_acc_list)}")
 
 

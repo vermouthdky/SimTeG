@@ -169,4 +169,4 @@ class Trainer(ABC):
         _, _, results = self.inference_and_evaluate(self.all_set)
         gc.collect()
         torch.cuda.empty_cache()
-        return results["valid_acc"] if return_value == "valid" else results["test_acc"]
+        return results["test_acc"], results["valid_acc"]

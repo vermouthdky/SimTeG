@@ -24,7 +24,6 @@ class Link_E5_model(nn.Module):
         pretrained_repo = args.pretrained_repo
         logger.warning(f"inherit model weights from {pretrained_repo}")
         config = AutoConfig.from_pretrained(pretrained_repo)
-        config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules
@@ -65,7 +64,6 @@ class Link_Sentence_Transformer(nn.Module):
         pretrained_repo = args.pretrained_repo
         logger.warning(f"inherit model weights from {pretrained_repo}")
         config = AutoConfig.from_pretrained(pretrained_repo)
-        config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
         config.save_pretrained(save_directory=args.output_dir)
         # init modules

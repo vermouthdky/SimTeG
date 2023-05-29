@@ -189,8 +189,14 @@ if __name__ == "__main__":
         target_max = split_edge[split]["target_node"].max()
         logger.info(f"max source node id in {split}: {source_max}")
         logger.info(f"max target node id in {split}: {target_max}")
-    __import__("ipdb").set_trace()
-    print(split_edge["train"])
-    print(split_edge["test"])
-    print(pyg_dataset[0])
+    num_edge_list = []
+    for split in split_edge.keys():
+        num_edge = split_edge[split]["source_node"].size(0)
+        num_edge_list.append(num_edge)
+    print(num_edge_list)
+    num_edges = sum(num_edge_list)
+    print(num_edges)
+    print(data.x.size(0) / num_edges)
+    print([_ / num_edges for _ in num_edge_list])
+    print(data.x.shape)
     exit(-1)

@@ -8,7 +8,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 LM_LIST = ["all-roberta-large-v1", "all-mpnet-base-v2", "all-MiniLM-L6-v2", "e5-large"]
-GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN"]
+GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN", "MLP"]
 SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
 DECOUPLING_GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC"]
 
@@ -39,6 +39,7 @@ def parse_args():
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
     parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
     parser.add_argument("--bert_x_dir", type=str, help="used when use_bert_x is True")
+    parser.add_argument("--giant_x_dir", type=str, help="used when use_bert_x is True")
 
     # dataset and fixed model args
     parser.add_argument("--num_labels", type=int)
@@ -63,6 +64,7 @@ def parse_args():
     parser.add_argument("--compute_kl_loss", action="store_true", default=False)
     parser.add_argument("--use_default_config", action="store_true", default=False)
     parser.add_argument("--use_peft", action="store_true", default=False)
+    parser.add_argument("--use_giant_x", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -203,6 +205,8 @@ def _set_dataset_specific_args(args):
         args.hidden_size = hidden_size_dict[args.model_type]
     elif args.use_bert_x and args.lm_type in hidden_size_dict.keys():
         args.num_feats = args.hidden_size = hidden_size_dict[args.lm_type]
+    elif args.use_giant_x:
+        args.num_feats = args.hidden_size = 768
 
     return args
 

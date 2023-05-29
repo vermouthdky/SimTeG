@@ -89,3 +89,27 @@ class GCN(nn.Module):
     @torch.no_grad()
     def inference(self, x_all, device, subgraph_loader):
         return self.gnn_model.inference(x_all, device, subgraph_loader)
+
+
+class MLP(nn.Module):
+    def __init__(self, args):
+        super(MLP, self).__init__()
+        self.dense = nn.Linear(args.num_feats, args.hidden_size)
+        self.dropout = nn.Dropout(args.gnn_dropout)
+        self.out_proj = nn.Linear(args.hidden_size, args.num_labels)
+
+    def forward(self, x):
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+    @torch.no_grad()
+    def inference(self, device, all_loader):
+        x_list = []
+        for x in all_loader:
+            x = self.forward(x.to(device))
+            x_list.append(x.cpu())
+        return torch.cat(x_list, dim=0)

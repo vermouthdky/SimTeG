@@ -1,5 +1,5 @@
 from .gbert.gbert_modeling import GBert
-from .gnns.gnn_modeling import GAMLP, GCN, SAGN, SGC, SIGN, GraphSAGE
+from .gnns.gnn_modeling import GAMLP, GCN, MLP, SAGN, SGC, SIGN, GraphSAGE
 from .lms.link_lm_modeling import Link_E5_model, Link_Sentence_Transformer
 from .lms.lm_modeling import (
     AdapterDeberta,
@@ -17,6 +17,7 @@ node_cls_model_class = {
     "SAGN": SAGN,
     "GAMLP": GAMLP,
     "SIGN": SIGN,
+    "MLP": MLP,
     "Roberta": Roberta,
     "Deberta": Deberta,
     "all-roberta-large-v1": Sentence_Transformer,
@@ -32,6 +33,7 @@ link_pred_model_class = {
     "SAGN": SAGN,
     "GAMLP": GAMLP,
     "SIGN": SIGN,
+    "MLP": MLP,
     "Roberta": Roberta,
     "Deberta": Deberta,
     "all-roberta-large-v1": Link_Sentence_Transformer,

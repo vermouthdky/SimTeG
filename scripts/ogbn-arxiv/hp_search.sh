@@ -19,4 +19,4 @@
 # bash scripts/hp_search/gnn.sh ogbn-arxiv e5-large SAGN optuna_peft &
 
 # bash scripts/ogbn-arxiv/revgat/hp_search.sh
-bash scripts/ogbn-arxiv/graphsage/hp_search.sh
+# bash scripts/ogbn-arxiv/graphsage/hp_search.sh
