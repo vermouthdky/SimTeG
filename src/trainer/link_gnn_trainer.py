@@ -29,6 +29,9 @@ class LinkTrainer:
         self.evaluator = evaluator
         self.trial = kwargs.get("trial", None)
         self.model, self.predictor = self._prepare_model()
+        if self.model is not None:
+            self.model.to(self.device)
+        self.predictor.to(self.device)
         self.optimizer = self._prepare_optimizer()
 
     @property
@@ -52,25 +55,28 @@ class LinkTrainer:
 
     @torch.no_grad()
     def eval(self):
-        h = self.get_embeddings()
+        x_embs = self.get_embeddings()
 
         def test_split(split):
-            target = self.split_edge[split]["target_node"]
-            source = self.split_edge[split]["source_node"]
+            target_node = self.split_edge[split]["target_node"]
+            source_node = self.split_edge[split]["source_node"]
             target_neg = self.split_edge[split]["target_node_neg"].contiguous()
 
             pos_preds = []
-            for perm in DataLoader(range(source.size(0)), self.args.gnn_batch_size):
-                src, dst = source[perm], target[perm]
-                pos_preds += [self.predictor(h[src].to(self.device), h[dst].to(self.device)).squeeze().cpu()]
+            for perm in DataLoader(range(source_node.size(0)), 50000):
+                src, dst = source_node[perm], target_node[perm]
+                pos_preds += [self.predictor(x_embs[src].to(self.device), x_embs[dst].to(self.device)).squeeze().cpu()]
             pos_pred = torch.cat(pos_preds, dim=0)
 
             neg_preds = []
-            source = source.view(-1, 1).repeat(1, 1000).view(-1)
+            source_node = source_node.view(-1, 1).repeat(1, 1000).view(-1)  # we have 1000 neg samples for each instance
             target_neg = target_neg.reshape(-1)
-            for perm in DataLoader(range(source.size(0)), self.args.gnn_batch_size):
-                src, dst_neg = source[perm], target_neg[perm]
-                neg_preds += [self.predictor(h[src].to(self.device), h[dst_neg].to(self.device)).squeeze().cpu()]
+
+            for perm in DataLoader(range(source_node.size(0)), 50000):
+                src, dst_neg = source_node[perm], target_neg[perm]
+                neg_preds += [
+                    self.predictor(x_embs[src].to(self.device), x_embs[dst_neg].to(self.device)).squeeze().cpu()
+                ]
             neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
 
             eval_results = self.evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
@@ -125,15 +131,16 @@ class LinkTrainer:
 
 
 class LinkPredictor(torch.nn.Module):
-    def __init__(self, args):
+    def __init__(self, in_channels, hidden_channels, num_layers, dropout):
         super(LinkPredictor, self).__init__()
 
         self.lins = torch.nn.ModuleList()
-        self.lins.append(torch.nn.Linear(args.num_feats, args.hidden_size))
-        for _ in range(args.gnn_num_layers - 2):
-            self.lins.append(torch.nn.Linear(args.hidden_size, args.hidden_size))
-        self.lins.append(torch.nn.Linear(args.hidden_size, 1))
-        self.dropout = args.gnn_dropout
+        self.lins.append(torch.nn.Linear(in_channels, hidden_channels))
+        for _ in range(num_layers - 2):
+            self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
+        self.lins.append(torch.nn.Linear(hidden_channels, 1))
+
+        self.dropout = dropout
 
     def reset_parameters(self):
         for lin in self.lins:
@@ -178,11 +185,19 @@ class NegativeLinkNeighborSampler(NeighborSampler):
         return super(NegativeLinkNeighborSampler, self).sample(batch)
 
 
-class LinkGNNSamplingTrainer:  # single GPU
+class LinkGNNSamplingTrainer(LinkTrainer):  # single GPU
+    def __init__(self, *args, **kwargs):
+        super(LinkGNNSamplingTrainer, self).__init__(*args, **kwargs)
+        self.pos_loader, self.neg_loader, self.subgraph_loader = self._prepare_dataloader()
+
     def _prepare_model(self):
         assert self.args.model_type in ["GraphSAGE", "GCN"]
         model_class = get_model_class(self.args.model_type, self.args.task_type)
-        return model_class(self.args), LinkPredictor(self.args)
+        model = model_class(self.args)
+        predictor = LinkPredictor(
+            self.args.gnn_dim_hidden, self.args.gnn_dim_hidden, self.args.gnn_num_layers, self.args.gnn_dropout
+        )
+        return model, predictor
 
     def _prepare_dataloader(self):
         sizes = [15, 10, 5, 5, 5, 5]
@@ -210,10 +225,13 @@ class LinkGNNSamplingTrainer:  # single GPU
     def _prepare_optimizer(self):
         return torch.optim.Adam(list(self.model.parameters()) + list(self.predictor.parameters()), lr=self.args.gnn_lr)
 
+    def get_embeddings(self):
+        return self.model.inference(self.data.x, self.subgraph_loader, self.device)
+
     def training_step(self, epoch):
         self.model.train()
         self.predictor.train()
-        pbar = tqdm(total=1000)
+        pbar = tqdm(total=1000, disable=True)
         pbar.set_description("Training")
 
         total_loss, total_examples = 0, 0
@@ -222,14 +240,14 @@ class LinkGNNSamplingTrainer:  # single GPU
 
             batch_size, n_id, adjs = pos_data
             adjs = [adj.to(self.device) for adj in adjs]
-            h = self.model(self.data.x[n_id], adjs)
+            h = self.model(self.data.x[n_id].to(self.device), adjs)
             h_src, h_dst = h.chunk(2, dim=0)
             pos_out = self.predictor(h_src, h_dst)
             pos_loss = -torch.log(pos_out + 1e-15).mean()
 
             batch_size, n_id, adjs = neg_data
             adjs = [adj.to(self.device) for adj in adjs]
-            h = self.model(self.data.x[n_id], adjs)
+            h = self.model(self.data.x[n_id].to(self.device), adjs)
             h_src, h_dst = h.chunk(2, dim=0)
             neg_out = self.predictor(h_src, h_dst)
             neg_loss = -torch.log(1 - neg_out + 1e-15).mean()
@@ -251,103 +269,27 @@ class LinkGNNSamplingTrainer:  # single GPU
         pbar.close()
         return total_loss / total_examples
 
-    @torch.no_grad()
-    def eval(self):
-        self.predictor.eval()
-        self.model.eval()
 
-        h = self.model.inference(self.data.x, self.subgraph_loader, self.device).to(self.device)
-
-        def test_split(split):
-            source = self.split_edge[split]["source_node"].to(self.device)
-            target = self.split_edge[split]["target_node"].to(self.device)
-            target_neg = self.split_edge[split]["target_node_neg"].to(self.device)
-
-            pos_preds = []
-            for perm in DataLoader(range(source.size(0)), self.args.gnn_batch_size):
-                src, dst = source[perm], target[perm]
-                pos_preds += [self.predictor(h[src], h[dst]).squeeze().cpu()]
-            pos_pred = torch.cat(pos_preds, dim=0)
-
-            neg_preds = []
-            source = source.view(-1, 1).repeat(1, 1000).view(-1)
-            target_neg = target_neg.view(-1)
-            for perm in DataLoader(range(source.size(0)), self.args.gnn_batch_size):
-                src, dst_neg = source[perm], target_neg[perm]
-                neg_preds += [self.predictor(h[src], h[dst_neg]).squeeze().cpu()]
-            neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
-
-            return (
-                self.evaluator.eval(
-                    {
-                        "y_pred_pos": pos_pred,
-                        "y_pred_neg": neg_pred,
-                    }
-                )["mrr_list"]
-                .mean()
-                .item()
-            )
-
-        train_mrr = test_split("eval_train")
-        valid_mrr = test_split("valid")
-        test_mrr = test_split("test")
-
-        results = dict(train_mrr=train_mrr, valid_mrr=valid_mrr, test_mrr=test_mrr)
-        return results
-
-    def train(self, return_value="valid"):
-        self.model, self.predictor = self._prepare_model()
-        self.model.to(self.device)
-        self.predictor.to(self.device)
-        self.data.x.to(self.device)
-        self.model.reset_parameters()
-        self.pos_loader, self.neg_loader, self.subgraph_loader = self._prepare_dataloader()
-        self.optimizer = self._prepare_optimizer()
-        best_val_mrr = final_test_mrr = 0
-        accumulate_patience = 0
-        for epoch in range(1, self.args.gnn_epochs + 1):
-            loss = self.training_step(epoch)
-            logger.info(f"Epoch: {epoch:02d}, Loss: {loss:.4f}")
-
-            if epoch > 49 and epoch % 5 == 0:
-                results = self.eval()
-                logger.info("".join("{}:{} ".format(k, v) for k, v in results.items()))
-                val_mrr, test_mrr = results["valid_mrr"], results["test_mrr"]
-                if val_mrr > best_val_mrr:
-                    accumulate_patience = 0
-                    best_val_mrr = val_mrr
-                    final_test_mrr = test_mrr
-                else:
-                    accumulate_patience += 1
-                    if accumulate_patience >= 2:
-                        break
-            if self.trial is not None:
-                self.trial.report(val_mrr, epoch)
-                if self.trial.should_prune():
-                    raise optuna.exceptions.TrialPruned()
-        logger.info(f"best_val_mrr: {best_val_mrr:.4f}, final_test_mrr: {final_test_mrr:.4f}")
-        return final_test_mrr, best_val_mrr
+####################################
+# MLPTrainer
+####################################
 
 
-class LinkMLPTrainer:  # single GPU
-    def __init__(self, args, data, split_idx, evaluator, **kwargs):
-        self.args = args
-        self.data = ToUndirected()(data)
-        self.split_edge = split_idx
-        self.evaluator = evaluator
-        self.trial = kwargs.get("trial", None)
-        self.predictor = self._prepare_model().to(self.device)
-        self.optimizer = self._prepare_optimizer()
-
-    @property
-    def device(self):
-        return torch.device(self.args.single_gpu if torch.cuda.is_available() else "cpu")
+class LinkMLPTrainer(LinkTrainer):  # single GPU
+    def __init__(self, *args, **kwargs):
+        super(LinkMLPTrainer, self).__init__(*args, **kwargs)
 
     def _prepare_model(self):
-        return LinkPredictor(self.args)
+        predictor = LinkPredictor(
+            self.args.num_feats, self.args.gnn_dim_hidden, self.args.gnn_num_layers, self.args.gnn_dropout
+        )
+        return None, predictor
 
     def _prepare_optimizer(self):
         return torch.optim.Adam(self.predictor.parameters(), lr=self.args.gnn_lr)
+
+    def get_embeddings(self):
+        return self.data.x
 
     def training_step(self, epoch):
         self.predictor.train()
@@ -375,77 +317,3 @@ class LinkMLPTrainer:  # single GPU
             total_examples += num_examples
 
         return total_loss / total_examples
-
-    @torch.no_grad()
-    def eval(self):
-        self.predictor.eval()
-        h = self.data.x
-
-        def test_split(split):
-            target = self.split_edge[split]["target_node"]
-            source = self.split_edge[split]["source_node"]
-            target_neg = self.split_edge[split]["target_node_neg"].contiguous()
-
-            pos_preds = []
-            for perm in DataLoader(range(source.size(0)), self.args.gnn_batch_size):
-                src, dst = source[perm], target[perm]
-                pos_preds += [self.predictor(h[src].to(self.device), h[dst].to(self.device)).squeeze().cpu()]
-            pos_pred = torch.cat(pos_preds, dim=0)
-
-            neg_preds = []
-            source = source.view(-1, 1).repeat(1, 1000).view(-1)
-            target_neg = target_neg.reshape(-1)
-            for perm in DataLoader(range(source.size(0)), self.args.gnn_batch_size):
-                src, dst_neg = source[perm], target_neg[perm]
-                neg_preds += [self.predictor(h[src].to(self.device), h[dst_neg].to(self.device)).squeeze().cpu()]
-            neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
-
-            eval_results = self.evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
-            return {key[:-5]: value.mean().item() for key, value in eval_results.items()}
-
-        valid_metrics = test_split("valid")
-        test_metrics = test_split("test")
-
-        return valid_metrics, test_metrics
-
-    def train(self, return_value="valid"):
-        best_val_mrr = 0
-        best_val_metrics, final_test_metrics = {}, {}
-        accumulate_patience = 0
-        for epoch in range(1, self.args.gnn_epochs + 1):
-            loss = self.training_step(epoch)
-            logger.info(f"Epoch: {epoch:02d}, Loss: {loss:.4f}")
-
-            if epoch % 5 == 0:
-                valid_metrics, test_metrics = self.eval()
-                logger.info(
-                    f"Epoch: {epoch}, Valid Metrics:: "
-                    + "".join("{}:{} ".format(k, v) for k, v in valid_metrics.items())
-                )
-                logger.info(
-                    f"Epoch: {epoch}, Test Metrics:: " + "".join("{}:{} ".format(k, v) for k, v in test_metrics.items())
-                )
-                val_mrr = valid_metrics["mrr"]
-                if val_mrr > best_val_mrr:
-                    accumulate_patience = 0
-                    best_val_mrr = val_mrr
-                    best_val_metrics = valid_metrics
-                    final_test_metrics = test_metrics
-                else:
-                    accumulate_patience += 1
-                    if accumulate_patience >= 2:
-                        break
-            if self.trial is not None:
-                self.trial.report(val_mrr, epoch)
-                if self.trial.should_prune():
-                    raise optuna.exceptions.TrialPruned()
-
-        logger.info(
-            f"Epoch: {epoch}, Best Valid Metrics:: "
-            + "".join("{}:{} ".format(k, v) for k, v in best_val_metrics.items())
-        )
-        logger.info(
-            f"Epoch: {epoch}, Final Test Metrics:: "
-            + "".join("{}:{} ".format(k, v) for k, v in final_test_metrics.items())
-        )
-        return final_test_metrics, best_val_metrics

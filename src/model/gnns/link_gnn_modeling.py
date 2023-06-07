@@ -19,10 +19,10 @@ class LinkGraphSAGE(torch.nn.Module):
         self.num_layers = args.gnn_num_layers
 
         self.convs = torch.nn.ModuleList()
-        self.convs.append(SAGEConv(args.num_feats, args.hidden_size))
+        self.convs.append(SAGEConv(args.num_feats, args.gnn_dim_hidden))
         for _ in range(args.gnn_num_layers - 2):
-            self.convs.append(SAGEConv(args.hidden_size, args.hidden_size))
-        self.convs.append(SAGEConv(args.hidden_size, args.hidden_size))
+            self.convs.append(SAGEConv(args.gnn_dim_hidden, args.gnn_dim_hidden))
+        self.convs.append(SAGEConv(args.gnn_dim_hidden, args.gnn_dim_hidden))
 
     def forward(self, x, adjs):
         for i, (edge_index, _, size) in enumerate(adjs):
@@ -85,9 +85,9 @@ class LinkGCN(nn.Module):
 class LinkMLP(nn.Module):
     def __init__(self, args):
         super(LinkMLP, self).__init__()
-        self.dense = nn.Linear(args.num_feats, args.hidden_size)
+        self.dense = nn.Linear(args.num_feats, args.gnn_dim_hidden)
         self.dropout = nn.Dropout(args.gnn_dropout)
-        self.out_proj = nn.Linear(args.hidden_size, args.hidden_size)
+        self.out_proj = nn.Linear(args.gnn_hidden_hidden, args.gnn_dim_hidden)
 
     def forward(self, x):
         x = self.dropout(x)

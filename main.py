@@ -66,7 +66,7 @@ def main(args):
     save_args(args, args.output_dir)
 
     if args.dataset in LINK_PRED_DATASETS:
-        val_metrics_list = {"mrr": [], "hits@1": [], "hits@5": [], "hits@10": []}
+        val_metrics_list = {"mrr": [], "hits@1": [], "hits@3": [], "hits@10": []}
         test_metrics_list = val_metrics_list.copy()
         for i, random_seed in enumerate(range(args.n_exps)):
             random_seed += args.start_seed

@@ -132,6 +132,8 @@ class LinkLMTrainer(Trainer):
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
             label_names=[],
+            deepspeed=self.args.deepspeed,
+            fp16=self.args.fp16,
         )
         return InnerTrainer(
             data=self.data,
@@ -169,8 +171,8 @@ class LinkLMTrainer(Trainer):
             pos_preds = []
             for perm in DataLoader(range(source.size(0)), 10000):
                 src, dst = source[perm], target[perm]
-                # pos_preds += [self.model.link_predict(x_embs[src], x_embs[dst]).squeeze().cpu()]
-                pos_preds = torch.dot(x_embs[src], x_embs[dst])
+                pos_preds += [self.model.link_predict(x_embs[src], x_embs[dst]).squeeze().cpu()]
+                # pos_preds = torch.dot(x_embs[src], x_embs[dst])
             pos_pred = torch.cat(pos_preds, dim=0)
 
             neg_preds = []

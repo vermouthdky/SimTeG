@@ -62,12 +62,12 @@ def load_data(args):
             split_idx["valid"] = {
                 "source_node": all_idx[1000:2000],
                 "target_node": all_idx[2000:3000],
-                "target_node_neg": torch.randint(0, 3000, (1000, 10)),
+                "target_node_neg": torch.randint(0, 3000, (1000, 1000)),
             }
-            split_idx["train"] = {
+            split_idx["test"] = {
                 "source_node": all_idx[2000:3000],
                 "target_node": all_idx[:1000],
-                "target_node_neg": torch.randint(0, 3000, (1000, 10)),
+                "target_node_neg": torch.randint(0, 3000, (1000, 1000)),
             }
         else:
             split_idx["train"] = all_idx[:1000]

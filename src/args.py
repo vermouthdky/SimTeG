@@ -119,7 +119,6 @@ def parse_args():
     parser.add_argument("--gnn_warmup_ratio", type=float, default=0.25)
     parser.add_argument("--gnn_lr_scheduler_type", type=str, default="constant", choices=["constant", "linear"])
     parser.add_argument("--gnn_eval_warmup", type=int, default=0)
-    parser.add_argument("--gnn_eval_interval", type=int, default=5)
 
     # optuna hyperparameters
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
