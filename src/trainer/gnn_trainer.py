@@ -269,7 +269,7 @@ class GNNSamplingTrainer:  # single gpu
         for epoch in range(1, self.args.gnn_epochs + 1):
             loss, acc = self.training_step(epoch)
             logger.info(f"Epoch {epoch:02d}, Loss: {loss:.4f}, Train Acc: {acc:.4f}")
-            if epoch > 3:
+            if epoch >= 10 and epoch % 5 == 0:
                 train_acc, val_acc, test_acc = self.eval()
                 logger.info(f"Epoch: {epoch:02d} Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}")
                 if val_acc > best_val_acc:
@@ -278,7 +278,7 @@ class GNNSamplingTrainer:  # single gpu
                     final_test_acc = test_acc
                 else:
                     accumulate_patience += 1
-                    if accumulate_patience >= 5:
+                    if accumulate_patience >= 2:
                         break
                 if self.trial is not None:
                     self.trial.report(val_acc, epoch)

@@ -12,8 +12,7 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --epochs 10 \
     --warmup_ratio 0.15 \
     --lr_scheduler_type linear \
-    --use_peft \
-    --debug
+    --use_peft
 
 # lm_type=${model_type}
 # bert_x_dir=out/${dataset}/${lm_type}/${suffix}/cached_embs/iter_0_x_embs.pt

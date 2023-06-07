@@ -6,8 +6,10 @@ import evaluate
 import numpy as np
 import torch
 import torch.distributed as dist
+from ogb.linkproppred import Evaluator
 from torch.utils.data import DataLoader
 from torch_geometric.utils import subgraph
+from torchmetrics.functional import retrieval_reciprocal_rank as mrr
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
 from transformers import TrainingArguments
@@ -19,92 +21,83 @@ from .trainer import Trainer
 logger = logging.getLogger(__name__)
 
 
+# def relabel(src, dst, neg_dst):
+#     src_dst_idx = torch.cat([src, dst, neg_dst]).unique()
+#     num_nodes = torch.max(src_dst_idx) + 1
+#     node_idx = torch.zeros(num_nodes, dtype=torch.long)
+#     node_idx[src_dst_idx] = torch.arange(src_dst_idx.size(0))
+#     return node_idx[src], node_idx[dst], node_idx[neg_dst]
+
+
 class Dataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        edge_index=None,
-    ):
+    def __init__(self, input_ids, att_mask, src, dst, neg_dst):
         super().__init__()
-        self.data = {
-            "input_ids": input_ids,
-            "att_mask": attention_mask,
-            "edge_index": edge_index,
-        }
+        self.input_ids, self.att_mask = input_ids, att_mask
+        self.src, self.dst, self.neg_dst = src, dst, neg_dst
+        # auxiliary
+        self.num_nodes = self.input_ids.size(0)
 
     def __len__(self):
-        return self.data["input_ids"].size(0)
+        return self.src.size(0)
 
     def __getitem__(self, index):
-        if isinstance(index, torch.Tensor):
-            index = index.item()
-        batch_data = {
-            "input_ids": self.data["input_ids"][index],
-            "att_mask": self.data["att_mask"][index],
-        }
-        if self.data["edge_index"] is not None:
-            batch_data["edge_index"] = subgraph(torch.tensor(index), self.data["edge_index"], relabel_nodes=True)
-        return batch_data
+        src, dst, neg_dst = self.src[index], self.dst[index], torch.randint(self.num_nodes, (1,))
+        all_idx = torch.tensor([src, dst, neg_dst], dtype=torch.long)
+        data = dict(input_ids=self.input_ids[all_idx], att_mask=self.att_mask[all_idx])
+        return data
+
+
+class InferenceDataset(torch.utils.data.Dataset):
+    def __init__(self, input_ids, att_mask):
+        super().__init__()
+        self.input_ids, self.att_mask = input_ids, att_mask
+
+    def __len__(self):
+        return self.input_ids.size(0)
+
+    def __getitem__(self, index):
+        return dict(input_ids=self.input_ids[index], att_mask=self.att_mask[index])
 
 
 class InnerTrainer(HugTrainer):
+    def __init__(self, data, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def compute_loss(self, model, inputs, return_outputs=False):
         eps = 1e-15
-        if self.args.local_rank <= 0:
-            __import__("ipdb").set_trace()
-        else:
-            dist.barrier()
-        input_ids = inputs.pop("input_ids")
-        att_mask = inputs.pop("att_mask")
-        edge_index = inputs.pop("edge_index")
-
-        # forward
-        h = model(input_ids=input_ids.cuda(), attention_mask=att_mask.cuda())
-
-        # compute postive loss
-        src, dst = edge_index[0], edge_index[1]
-        pos_out = model.link_predict(h[src], h[dst])
-        pos_out = -torch.log(pos_out + eps).mean()
-
-        # compute negative loss
-        dst_neg = torch.randint(0, h.size(0), src.size(), dtype=torch.long).cuda()
-        neg_out = model.link_predict(h[src], h[dst_neg])
+        input_ids, att_mask = inputs.pop("input_ids"), inputs.pop("att_mask")
+        pos_out, neg_out = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
+        pos_loss = -torch.log(pos_out + eps).mean()
         neg_loss = -torch.log(1 - neg_out + eps).mean()
-
-        loss = pos_out + neg_loss
-
+        loss = pos_loss + neg_loss
         if return_outputs:
-            outputs = {"hidden_features": h}
+            outputs = dict(pos_out=pos_out, neg_out=neg_out)
         return (loss, outputs) if return_outputs else loss
-
-    def get_train_dataloader(self) -> DataLoader:
-        train_set = torch.arange(self.train_set)
-        return DataLoader(
-            train_set,
-            batch_size=self._train_batch_size,
-            sampler=self._get_train_sampler(),
-            drop_last=self.args.dataloader_drop_last,
-            num_workers=self.args.dataloader_num_workers,
-            pin_memory=self.args.dataloader_pin_memory,
-        )
 
 
 class LinkLMTrainer(Trainer):
-    # def _get_dataset(self, mode):
-    #     assert mode in ["train", "valid", "test", "all"]
-    #     src, dst = self.split_idx[mode]["source_node"], self.split_idx[mode]["target_node"]
-    #     edge_index = torch.stack([src, dst], dim=0) if mode != "all" else None
-    #     if self.rank == 0:
-    #         __import__("ipdb").set_trace()
-    #     else:
-    #         dist.barrier()
-    #     dataset = Dataset(self.data.input_ids, self.data.attention_mask, edge_index)
-    #     return dataset
+    def _get_dataset(self, mode):
+        assert mode in ["train", "valid", "test"]
+        src, dst = self.split_idx[mode]["source_node"], self.split_idx[mode]["target_node"]
+        if mode == "train":
+            neg_dst = torch.randint(0, self.data.num_nodes, (src.size(0),))
+        else:
+            neg_dst = self.split_idx[mode]["target_node_neg"]
+        dataset = Dataset(self.data.input_ids, self.data.attention_mask, src=src, dst=dst, neg_dst=neg_dst)
+        return dataset
 
     def _prepare_dataset(self):
-        # return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
-        return self.data, self.data, self.data
+        train_set, valid_set = self._get_dataset("train"), self._get_dataset("valid")
+        all_set = InferenceDataset(self.data.input_ids, self.data.attention_mask)
+        return train_set, valid_set, all_set
+
+    def compute_metrics(self, eval_pred):
+        pos_out, neg_out = eval_pred[0]
+        pos_out, neg_out = torch.from_numpy(pos_out), torch.from_numpy(neg_out)
+        pos_target, neg_target = torch.ones_like(pos_out, dtype=torch.bool), torch.zeros_like(neg_out, dtype=torch.bool)
+        predict = torch.cat([pos_out, neg_out])
+        target = torch.cat([pos_target, neg_target])
+        return {"mrr": mrr(predict, target)}
 
     def _prepare_trainer(self):
         # prepare training args
@@ -124,7 +117,7 @@ class LinkLMTrainer(Trainer):
             learning_rate=self.args.lr,
             weight_decay=self.args.weight_decay,
             load_best_model_at_end=True,
-            metric_for_best_model="eval_accuracy",
+            metric_for_best_model="mrr",
             dataloader_drop_last=True,
             gradient_accumulation_steps=self.args.accum_interval,
             label_smoothing_factor=self.args.label_smoothing,
@@ -138,9 +131,10 @@ class LinkLMTrainer(Trainer):
             local_rank=self.rank,
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
-            label_names=["edge_index"],
+            label_names=[],
         )
         return InnerTrainer(
+            data=self.data,
             model=self.model,
             args=training_args,
             train_dataset=self.train_set,
@@ -149,8 +143,68 @@ class LinkLMTrainer(Trainer):
             callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
         )
 
-    def _evalute(self):
-        pass
+    def inference(self, dataset, embs_path):
+        x_embs_name = "x_embs.pt"
+        emb_handler = EmbeddingHandler(embs_path)
+        if self.args.use_cache and emb_handler.has([x_embs_name]):
+            x_embs = emb_handler.load(x_embs_name)
+            if isinstance(x_embs, np.ndarray):
+                x_embs = torch.from_numpy(x_embs)
+        else:
+            eval_output = self.trainer.predict(dataset)
+            x_embs = eval_output.predictions
+            x_embs = torch.from_numpy(x_embs)
+            emb_handler.save(x_embs, x_embs_name)
+            logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
+        return x_embs
 
-    def inference(self):
-        pass
+    def _evaluate(self, x_embs):
+        evaluator = Evaluator(name="ogbl-citation2")
+
+        def test_split(split):
+            source = self.split_idx[split]["source_node"].to(self.rank)
+            target = self.split_idx[split]["target_node"].to(self.rank)
+            target_neg = self.split_idx[split]["target_node_neg"].to(self.rank)
+
+            pos_preds = []
+            for perm in DataLoader(range(source.size(0)), 10000):
+                src, dst = source[perm], target[perm]
+                # pos_preds += [self.model.link_predict(x_embs[src], x_embs[dst]).squeeze().cpu()]
+                pos_preds = torch.dot(x_embs[src], x_embs[dst])
+            pos_pred = torch.cat(pos_preds, dim=0)
+
+            neg_preds = []
+            source = source.view(-1, 1).repeat(1, 1000).view(-1)
+            target_neg = target_neg.view(-1)
+            for perm in DataLoader(range(source.size(0)), 10000):
+                src, dst_neg = source[perm], target_neg[perm]
+                # neg_preds += [self.model.link_predict(x_embs[src], x_embs[dst_neg]).squeeze().cpu()]
+                neg_preds += torch.dot(x_embs[src], x_embs[dst_neg])
+            neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
+
+            mrr = evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
+            logger.info(mrr)
+            return mrr["mrr_list"].mean().item()
+
+        return dict(valid_mrr=test_split("valid"), test_mrr=test_split("test"))
+
+    def inference_and_evaluate(self, dataset):
+        embs_path = osp.join(self.args.output_dir, "cached_embs")
+        x_embs = self.inference(dataset, embs_path)
+        results = self._evaluate(x_embs)
+        logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
+        gc.collect()
+        torch.cuda.empty_cache()
+        return results  # logits_embs is None
+
+    def train(self, return_value="valid"):
+        self.prepare()
+        assert self.args.mode in ["train", "test"]
+        if self.args.mode == "train":
+            self.train_once()
+
+        logger.warning(f"\n*************** Start inference and testing ***************\n")
+        results = self.inference_and_evaluate(self.all_set)
+        gc.collect()
+        torch.cuda.empty_cache()
+        return results["test_mrr"], results["valid_mrr"]

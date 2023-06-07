@@ -76,7 +76,7 @@ class OgbWithText(InMemoryDataset):
             return text_encoding["input_ids"], text_encoding["attention_mask"]
         input_ids, attention_mask = self._mapping_and_tokenizing()
         torch.save({"input_ids": input_ids, "attention_mask": attention_mask}, tokenized_path)
-        logger.info("saved tokenized data in {}".format(tokenized_path))
+        logger.info("save the tokenized data to {}".format(tokenized_path))
         return input_ids, attention_mask
 
     def save_metainfo(self):

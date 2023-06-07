@@ -460,7 +460,7 @@ def train_mean_teacher_sagn(
 
         alpha = args.ema_decay
         for mean_param, param in zip(teacher_model.parameters(), model.parameters()):
-            mean_param.data.mul_(alpha).add_(1 - alpha, param.data)
+            mean_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
         iter_num += 1
     loss = total_loss / iter_num
     loss_mse = total_loss_mse / iter_num

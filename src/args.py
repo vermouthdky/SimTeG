@@ -7,7 +7,14 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-LM_LIST = ["all-roberta-large-v1", "all-mpnet-base-v2", "all-MiniLM-L6-v2", "e5-large"]
+LM_LIST = [
+    "all-roberta-large-v1",
+    "all-mpnet-base-v2",
+    "all-MiniLM-L6-v2",
+    "e5-large",
+    "deberta-v2-xxlarge",
+    "sentence-t5-large",
+]
 GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN", "MLP"]
 SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
 DECOUPLING_GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC"]
@@ -27,6 +34,7 @@ def parse_args():
     parser.add_argument("--local_rank", type=int)
     parser.add_argument("--suffix", type=str, default="main")
     parser.add_argument("--n_exps", type=int, default=1)
+    parser.add_argument("--deepspeed", type=str, default=None)
 
     # parameters for data and model storage
     parser.add_argument("--data_folder", type=str, default="../data")
@@ -65,6 +73,7 @@ def parse_args():
     parser.add_argument("--use_default_config", action="store_true", default=False)
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--use_giant_x", action="store_true", default=False)
+    parser.add_argument("--fp16", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -109,6 +118,8 @@ def parse_args():
     parser.add_argument("--gnn_epochs", type=int, default=500)
     parser.add_argument("--gnn_warmup_ratio", type=float, default=0.25)
     parser.add_argument("--gnn_lr_scheduler_type", type=str, default="constant", choices=["constant", "linear"])
+    parser.add_argument("--gnn_eval_warmup", type=int, default=0)
+    parser.add_argument("--gnn_eval_interval", type=int, default=5)
 
     # optuna hyperparameters
     parser.add_argument("--expected_valid_acc", type=float, default=0.6)
@@ -167,6 +178,8 @@ def _set_pretrained_repo(args):
         "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
         "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
         "e5-large": "intfloat/e5-large",
+        "deberta-v2-xxlarge": "microsoft/deberta-v2-xxlarge",
+        "sentence-t5-large": "sentence-transformers/sentence-t5-large",
     }
 
     if args.model_type in dict.keys():
@@ -199,6 +212,8 @@ def _set_dataset_specific_args(args):
         "all-mpnet-base-v2": 768,
         "all-MiniLM-L6-v2": 384,
         "e5-large": 1024,
+        "deberta-v2-xxlarge": 1536,
+        "sentence-t5-large": 768,
     }
 
     if args.model_type in hidden_size_dict.keys():

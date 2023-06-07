@@ -1,14 +1,7 @@
-from .gbert.gbert_modeling import GBert
-from .gnns.gnn_modeling import GAMLP, GCN, MLP, SAGN, SGC, SIGN, GraphSAGE
-from .lms.link_lm_modeling import Link_E5_model, Link_Sentence_Transformer
-from .lms.lm_modeling import (
-    AdapterDeberta,
-    AdapterRoberta,
-    Deberta,
-    E5_model,
-    Roberta,
-    Sentence_Transformer,
-)
+from .gnns.gnn_modeling import *
+from .gnns.link_gnn_modeling import *
+from .lms.link_lm_modeling import *
+from .lms.lm_modeling import *
 
 node_cls_model_class = {
     "GraphSAGE": GraphSAGE,
@@ -18,27 +11,23 @@ node_cls_model_class = {
     "GAMLP": GAMLP,
     "SIGN": SIGN,
     "MLP": MLP,
-    "Roberta": Roberta,
-    "Deberta": Deberta,
+    "deberta-v2-xxlarge": Deberta,
     "all-roberta-large-v1": Sentence_Transformer,
     "all-mpnet-base-v2": Sentence_Transformer,
     "all-MiniLM-L6-v2": Sentence_Transformer,
+    "sentence-t5-large": T5_model,
     "e5-large": E5_model,
 }
 
 link_pred_model_class = {
-    "GraphSAGE": GraphSAGE,
-    "GCN": GCN,
-    "SGC": SGC,
-    "SAGN": SAGN,
-    "GAMLP": GAMLP,
-    "SIGN": SIGN,
-    "MLP": MLP,
-    "Roberta": Roberta,
-    "Deberta": Deberta,
+    "GraphSAGE": LinkGraphSAGE,
+    "GCN": LinkGCN,
+    "MLP": LinkMLP,
+    "deberta-v2-xxlarge": Deberta,
     "all-roberta-large-v1": Link_Sentence_Transformer,
     "all-mpnet-base-v2": Link_Sentence_Transformer,
     "all-MiniLM-L6-v2": Link_Sentence_Transformer,
+    "sentence-t5-large": T5_model,
     "e5-large": Link_E5_model,
 }
 

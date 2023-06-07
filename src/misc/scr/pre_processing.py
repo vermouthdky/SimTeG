@@ -1,33 +1,25 @@
 import argparse
+import gc
 import os
 
 import numpy as np
 import torch
-from cogdl.data import Graph
-from cogdl.utils import spmm_cpu
-from ogb.nodeproppred import NodePropPredDataset
+from ogb.nodeproppred import PygNodePropPredDataset
+from torch_geometric.transforms import ToSparseTensor
 from torch_sparse import spmm
 from tqdm import tqdm
 
 
-def build_cogdl_graph(name, root):
-    dataset = NodePropPredDataset(name=name, root=root)
-    graph, y = dataset[0]
-    x = torch.tensor(graph["node_feat"]).float().contiguous() if graph["node_feat"] is not None else None
-    y = torch.tensor(y.squeeze())
-    row, col = graph["edge_index"][0], graph["edge_index"][1]
-    row = torch.from_numpy(row)
-    col = torch.from_numpy(col)
-    edge_index = torch.stack([row, col], dim=0)
-    graph = Graph(x=x, edge_index=edge_index, y=y)
-    graph.splitted_idx = dataset.get_idx_split()
-
-    return graph
+def load_data(args):
+    dataset = PygNodePropPredDataset(name="ogbn-products", root=args.data_dir)
+    data = dataset.data
+    split_idx = dataset.get_idx_split()
+    return data, split_idx
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="ogbn-products")
-parser.add_argument("--data_dir", type=str, default="../cogdl_data")
+parser.add_argument("--data_dir", type=str, default="../data")
 parser.add_argument("--lm_model_type", type=str, default=None)
 parser.add_argument("--num_hops", type=int, default=5)
 # NOTE: set root = output_dir
@@ -38,8 +30,7 @@ parser.add_argument("--bert_x_dir", type=str, default=None)
 args = parser.parse_args()
 print(args)
 
-graph = build_cogdl_graph(name=args.dataset, root=args.data_dir)
-splitted_idx = graph.splitted_idx
+graph, splitted_idx = load_data(args)
 train_nid = splitted_idx["train"]
 val_nid = splitted_idx["valid"]
 test_nid = splitted_idx["test"]
@@ -56,14 +47,17 @@ elif args.bert_x_dir != None:
     print("Pretrained node feature loaded! Path: {}".format(args.bert_x_dir))
     print(f"graph.x.shape: {graph.x.shape}")
 
-__import__("ipdb").set_trace()
 
-graph.row_norm()
+# edge_index to adj_t
+graph = ToSparseTensor()(graph)
+deg = graph.adj_t.sum(dim=1).to(torch.float)
+deg_inv_sqrt = deg.pow(-0.5)
+deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+adj_t = deg_inv_sqrt.view(-1, 1) * graph.adj_t * deg_inv_sqrt.view(1, -1)
 feats = [graph.x]
 print("Compute neighbor-averaged feats")
 for hop in tqdm(range(1, args.num_hops + 1)):
-    # feats.append(spmm_cpu(graph, feats[-1]))
-    feat = spmm(graph.edge_index, graph.edge_weight, graph.num_nodes, graph.num_nodes, feats[-1])
+    feat = adj_t @ feats[-1]
     feats.append(feat)
 
 for i, x in enumerate(feats):
@@ -80,3 +74,4 @@ for i, x in enumerate(feats):
         save_dir = f"{dirs}/feat_{i}.pt"
         print(f"saved feat_{i}.pt to {save_dir}")
         torch.save(feats[i], save_dir)
+gc.collect()

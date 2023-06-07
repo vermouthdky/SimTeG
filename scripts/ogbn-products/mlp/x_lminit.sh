@@ -3,7 +3,7 @@ model_type=MLP
 
 lm_model_type=all-MiniLM-L6-v2
 suffix=main_X_${lm_model_type}_peft
-bert_x_dir=out/${dataset}/${lm_model_type}/optuna/best/cached_embs/x_embs.pt
+bert_x_dir=out/${dataset}/${lm_model_type}/optuna_peft/best/cached_embs/x_embs.pt
 bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --single_gpu 0 \
     --n_exps 10 \
@@ -20,7 +20,7 @@ bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --s
 
 lm_model_type=all-roberta-large-v1
 suffix=main_X_${lm_model_type}_peft
-bert_x_dir=out/${dataset}/${lm_model_type}/optuna/best/cached_embs/x_embs.pt
+bert_x_dir=out/${dataset}/${lm_model_type}/optuna_peft/best/cached_embs/x_embs.pt
 bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --single_gpu 1 \
     --n_exps 10 \
@@ -37,7 +37,7 @@ bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --s
 
 lm_model_type=e5-large
 suffix=main_X_${lm_model_type}_peft
-bert_x_dir=out/${dataset}/${lm_model_type}/optuna/best/cached_embs/x_embs.pt
+bert_x_dir=out/${dataset}/${lm_model_type}/optuna_peft/best/cached_embs/x_embs.pt
 bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --single_gpu 2 \
     --n_exps 10 \

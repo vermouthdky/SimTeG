@@ -38,15 +38,6 @@ class HP_search(ABC):
     def __init__(self, args):
         self.args = args
 
-    def objective(self, trial):
-        args = self.args
-        args = self.setup_search_space(args, trial)
-        args.optuna = True
-        logger.info(args)
-        dist.broadcast_object_list([args], src=0)
-        best_acc = self.train(args, trial=trial)
-        return best_acc
-
     def train(self, args, trial=None):
         data, split_idx, evaluator = load_data(args)
         # trainer
@@ -90,6 +81,64 @@ class HP_search(ABC):
         for key, value in trial.params.items():
             logger.info("    {}: {}".format(key, value))
         return study
+
+
+class Single_HP_search(HP_search):
+    def objective(self, trial):
+        args = self.args
+        args = self.setup_search_space(args, trial)
+        args.optuna = True
+        logger.info(args)
+        best_acc = self.train(args, trial=trial)
+        return best_acc
+
+    def run(self, n_trials):
+        # run
+        args = self.args
+        args.random_seed = args.start_seed
+        set_seed(random_seed=args.random_seed)
+
+        study = optuna.create_study(
+            direction="maximize",
+            storage="sqlite:///optuna.db",
+            study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
+            load_if_exists=True,
+            pruner=optuna.pruners.SuccessiveHalvingPruner(),
+        )
+        study.optimize(
+            self.objective, n_trials=n_trials, callbacks=[partial(save_best_trial, output_dir=args.output_dir)]
+        )
+        assert study is not None
+        pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+        complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+        logger.info("Study statistics: ")
+        logger.info("  Number of finished trials: {}".format(len(study.trials)))
+        logger.info("  Number of pruned trials: {}".format(len(pruned_trials)))
+        logger.info("  NUmber of complete trials: {}".format(len(complete_trials)))
+
+        logger.info("Best trial:")
+        trial = study.best_trial
+
+        logger.info("  Value: {}".format(trial.value))
+
+        logger.info("  Params: ")
+        for key, value in trial.params.items():
+            logger.info("    {}: {}".format(key, value))
+
+        torch.cuda.empty_cache()
+        gc.collect()
+
+
+class Dist_HP_search(HP_search):
+    def objective(self, trial):
+        args = self.args
+        args = self.setup_search_space(args, trial)
+        args.optuna = True
+        logger.info(args)
+        dist.broadcast_object_list([args], src=0)
+        best_acc = self.train(args, trial=trial)
+        return best_acc
 
     def run(self, n_trials):
         # run

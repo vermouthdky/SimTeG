@@ -1,8 +1,8 @@
 dataset=ogbn-products
 model_type=GraphSAGE
-lm_model_types=(all-MiniLM-L6-v2 all-roberta-large-v1 e5-large)
+lm_model_types=(all-roberta-large-v1 e5-large)
 
-for i in 0 1 2; do
+for i in 0 1; do
     lm_model_type=${lm_model_types[i]}
     suffix=X_${lm_model_type}
     bert_x_dir=out/${dataset}/${lm_model_type}/optuna/best/cached_embs/x_embs.pt

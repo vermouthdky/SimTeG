@@ -1,4 +1,4 @@
-dataset=ogbn-arxiv
+dataset=ogbl-arxiv
 model_type=GraphSAGE
 
 lm_model_type=all-MiniLM-L6-v2

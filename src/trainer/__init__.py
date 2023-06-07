@@ -7,6 +7,7 @@ from ..args import (
     SAMPLING_GNN_LIST,
 )
 from .gnn_trainer import GNNDecouplingTrainer, GNNSamplingTrainer, MLPTrainer
+from .link_gnn_trainer import LinkGNNSamplingTrainer, LinkMLPTrainer
 from .link_lm_trainer import LinkLMTrainer
 from .lm_trainer import LMTrainer
 
@@ -24,5 +25,10 @@ def get_trainer_class(args):
             return GNNSamplingTrainer
         else:
             return MLPTrainer
-    else:
-        raise NotImplementedError("not implemented Trainer class")
+    if model_type in GNN_LIST and dataset in LINK_PRED_DATASETS:
+        if model_type in SAMPLING_GNN_LIST:
+            return LinkGNNSamplingTrainer
+        elif model_type == "MLP":
+            return LinkMLPTrainer
+        else:
+            raise NotImplementedError(f"not implemented Trainer class for {model_type} on {dataset}")

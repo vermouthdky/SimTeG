@@ -1,4 +1,5 @@
-bash scripts/ogbn-products/sagn-scr/x_lminit.sh &
-bash scripts/ogbn-products/sagn-scr/x_giant.sh &
-bash scripts/ogbn-products/sagn-scr/x_fix.sh &
-bash scripts/ogbn-products/sagn-scr/x_ogb.sh &
+bash scripts/ogbn-products/sagn-scr/x_lminit.sh 0 &
+bash scripts/ogbn-products/sagn-scr/x_lminit.sh 1 &
+bash scripts/ogbn-products/sagn-scr/x_lminit.sh 2 &
+bash scripts/ogbn-products/sagn-scr/x_lminit.sh 3 &
+bash scripts/ogbn-products/sagn-scr/x_lminit.sh 4 &

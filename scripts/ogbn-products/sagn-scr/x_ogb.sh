@@ -16,7 +16,7 @@ mkdir -p ${ckpt_dir}
 python -m src.misc.scr.main --method SAGN \
     --output_dir $output_dir \
     --gpu 3 \
-    --stages 400 \
+    --stages 1000 \
     --train-num-epochs 0 \
     --input-drop 0.2 \
     --att-drop 0.4 \
@@ -49,5 +49,4 @@ python -m src.misc.scr.main --method SAGN \
     --num_hops 3 \
     --label_num_hops 9 \
     --disable_tqdm \
-    --label_smoothing_factor 0.3 \
     2>&1 | tee ${output_dir}/log.txt

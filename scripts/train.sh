@@ -4,7 +4,7 @@ dataset=$4
 suffix=$6
 
 # distributed training envs
-WORLD_SIZE=4
+WORLD_SIZE=$(nvidia-smi --list-gpus | wc -l)
 MASTER_PORT=$((10000 + $RANDOM % 10000))
 
 # set up output directory
@@ -20,7 +20,7 @@ python -m torch.distributed.run --nproc_per_node $WORLD_SIZE --master_port $MAST
     $@ 2>&1 | tee ${output_dir}/log.txt
 
 # deepspeed main.py \
-#     --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir \
+#     --mode train --output_dir $output_dir --ckpt_dir $ckpt_dir --deepspeed ds_config.json \
 #     $@ 2>&1 | tee ${output_dir}/log.txt
 
 # accelerate launch main.py \

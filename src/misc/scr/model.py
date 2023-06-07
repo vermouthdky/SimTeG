@@ -407,5 +407,6 @@ class R_GAMLP_RLU(nn.Module):  # recursive GAMLP
         if self.pre_dropout:
             right_1 = self.dropout(right_1)
         right_1 = self.lr_output(right_1)
+        # !!!BUG: label_fc has bugs
         right_1 += self.label_fc(self.label_drop(label_emb))
         return right_1

@@ -66,24 +66,14 @@ class OgblCitation2WithText(OgbWithText):
         for key, item in split_idx.items():
             split_idx[key] = replace_numpy_with_torchtensor(torch.load(osp.join(path, f"{key}.pt")))
 
-        # train = replace_numpy_with_torchtensor(torch.load(osp.join(path, "train.pt")))
-        # valid = replace_numpy_with_torchtensor(torch.load(osp.join(path, "valid.pt")))
-        # test = replace_numpy_with_torchtensor(torch.load(osp.join(path, "test.pt")))
-
         # subset with subset_node_idx and relable nodes
         subset_node_idx = self._get_subset_node_idx()
-
-        # get edge_index and concat them
-        # edge_index = []
-        # len_train, len_valid, len_test = len(train["source_node"]), len(valid["source_node"]), len(test["source_node"])
-        # for split_idx in [train, valid, test]:
-        #     partial_edge_index = torch.stack([split_idx["source_node"], split_idx["target_node"]], dim=0)
-        #     edge_index.append(partial_edge_index)
-        # edge_index = torch.cat(edge_index, dim=1)
 
         num_nodes, edge_index = 0, {}
         for key in split_idx.keys():
             edge_index[key] = torch.stack([split_idx[key]["source_node"], split_idx[key]["target_node"]], dim=0)
+            if key in ["valid", "test"]:
+                edge_index[key] = torch.cat([edge_index[key], split_idx[key]["target_node_neg"].t()], dim=0)
             num_nodes = max(num_nodes, int(edge_index[key].max()) + 1)
 
         def subset_and_relabeling(edge_index, subset, num_nodes):
@@ -94,12 +84,14 @@ class OgblCitation2WithText(OgbWithText):
             node_idx = torch.zeros(num_nodes, dtype=torch.long)
             node_idx[node_mask] = torch.arange(node_mask.sum())
             edge_index = node_idx[edge_index]
+            # BUG: some out-of-subset edges may appear, relabel them to 0
             return edge_index
 
         for key in split_idx.keys():
             edge_index[key] = subset_and_relabeling(edge_index[key], subset_node_idx, num_nodes)
             split_idx[key]["source_node"], split_idx[key]["target_node"] = edge_index[key][0], edge_index[key][1]
-
+            if key in ["valid", "test"]:
+                split_idx[key]["target_node_neg"] = edge_index[key][2:].t()
         return split_idx
 
     @property

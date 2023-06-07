@@ -47,7 +47,7 @@ def load_data(args):
         bert_x = torch.load(args.bert_x_dir)
         assert bert_x.size(0) == data.x.size(0)
         logger.warning(f"using bert x loaded from {args.bert_x_dir}")
-        data.x = bert_x
+        data.x = bert_x.to(torch.float)
     elif args.use_giant_x:
         giant_x = torch.from_numpy(np.load(args.giant_x_dir))
         assert giant_x.size(0) == data.x.size(0)
@@ -59,8 +59,16 @@ def load_data(args):
         data = data.subgraph(all_idx)
         if args.dataset in ["ogbl-citation2"]:
             split_idx["train"] = {"source_node": all_idx[:1000], "target_node": all_idx[1000:2000]}
-            split_idx["valid"] = {"source_node": all_idx[1000:2000], "target_node": all_idx[2000:3000]}
-            split_idx["train"] = {"source_node": all_idx[2000:3000], "target_node": all_idx[:1000]}
+            split_idx["valid"] = {
+                "source_node": all_idx[1000:2000],
+                "target_node": all_idx[2000:3000],
+                "target_node_neg": torch.randint(0, 3000, (1000, 10)),
+            }
+            split_idx["train"] = {
+                "source_node": all_idx[2000:3000],
+                "target_node": all_idx[:1000],
+                "target_node_neg": torch.randint(0, 3000, (1000, 10)),
+            }
         else:
             split_idx["train"] = all_idx[:1000]
             split_idx["valid"] = all_idx[1000:2000]

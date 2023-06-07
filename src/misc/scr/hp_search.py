@@ -1,21 +1,44 @@
 import argparse
 import copy
 import gc
+import logging
 import math
 import os
 import random
+import sys
 import time
 import uuid
 from copy import deepcopy
 
+import colorlog
 import numpy as np
+import optuna
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from optuna.trial import TrialState
 
 from .load_dataset import *
 from .model import EMA
 from .utils import *
+
+logger = logging.getLogger(__name__)
+
+
+def set_logging():
+    root = logging.getLogger()
+    # NOTE: clear the std::out handler first to avoid duplicated output
+    if root.hasHandlers():
+        root.handlers.clear()
+
+    root.setLevel(logging.INFO)
+    log_format = "[%(name)s %(asctime)s] %(message)s"
+    color_format = "%(log_color)s" + log_format
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(colorlog.ColoredFormatter(color_format))
+    root.addHandler(console_handler)
 
 
 def evaluate(y_pred, y_true, idx, evaluator):
@@ -30,13 +53,12 @@ def get_n_params(model):
             nn = nn * s
         pp += nn
     return pp
+    ionsole_handler.addFilter(RankFilter())
 
 
-def run(args, device):
-    dirs = f"./output/{args.dataset}/"
-    if not os.path.exists(dirs):
-        os.makedirs(dirs)
-    checkpt_file = dirs + uuid.uuid4().hex
+def run(args, device, trial=None):
+    dirs = "./"
+    checkpt_file = dirs
 
     with torch.no_grad():
         data = prepare_data(device, args)
@@ -61,7 +83,7 @@ def run(args, device):
             )
             predict_prob = predict_prob.softmax(dim=1)
 
-            print(
+            logger.info(
                 "This history model Train ACC is {}".format(
                     evaluator(
                         labels[:train_node_nums], predict_prob[:train_node_nums].argmax(dim=-1, keepdim=True).cpu()
@@ -69,7 +91,7 @@ def run(args, device):
                 )
             )
 
-            print(
+            logger.info(
                 "This history model Valid ACC is {}".format(
                     evaluator(
                         labels[train_node_nums : train_node_nums + valid_node_nums],
@@ -80,7 +102,7 @@ def run(args, device):
                 )
             )
 
-            print(
+            logger.info(
                 "This history model Test ACC is {}".format(
                     evaluator(
                         labels[train_node_nums + valid_node_nums : train_node_nums + valid_node_nums + test_node_nums],
@@ -95,7 +117,7 @@ def run(args, device):
 
             confident_nid = torch.arange(len(predict_prob))[predict_prob.max(1)[0] > args.threshold]
             extra_confident_nid = confident_nid[confident_nid >= train_node_nums]
-            print(f"Stage: {stage}, confident nodes: {len(extra_confident_nid)}")
+            logger.info(f"Stage: {stage}, confident nodes: {len(extra_confident_nid)}")
             enhance_idx = extra_confident_nid
             if len(extra_confident_nid) > 0:
                 enhance_loader = torch.utils.data.DataLoader(
@@ -108,7 +130,7 @@ def run(args, device):
             if args.consis == True:
                 confident_nid_cons = torch.arange(len(predict_prob))[predict_prob.max(1)[0] > args.threshold + 0.145]
                 extra_confident_nid_cons = confident_nid_cons[confident_nid_cons >= train_node_nums]
-                print(f"Stage: {stage}, confident_cons nodes: {len(extra_confident_nid_cons)}")
+                logger.info(f"Stage: {stage}, confident_cons nodes: {len(extra_confident_nid_cons)}")
                 enhance_idx_cons = extra_confident_nid_cons
                 if len(extra_confident_nid_cons) > 0:
                     enhance_loader_cons = torch.utils.data.DataLoader(
@@ -159,27 +181,27 @@ def run(args, device):
         )
 
         if args.method == "R_GAMLP":
-            print("not use rlu")
+            logger.info("not use rlu")
             model = gen_model(args, in_size, num_classes)
         elif args.method == "R_GAMLP_RLU":
-            print("GAMLP")
+            logger.info("GAMLP")
             model = gen_model_rlu(args, in_size, num_classes)
         elif args.method == "SAGN":
-            print("SAGN")
+            logger.info("SAGN")
             label_in_feats = label_emb.shape[1] if label_emb is not None else n_classes
             model = gen_model_sagn(args, in_size, label_in_feats, num_classes)
         model = model.to(device)
 
         if args.mean_teacher == True:
-            print("use mean_teacher")
+            logger.info("use mean_teacher")
             if args.method == "R_GAMLP":
-                print("not use rlu")
+                logger.info("not use rlu")
                 teacher_model = gen_model(args, in_size, num_classes)
             elif args.method == "R_GAMLP_RLU":
-                print("teacher-GAMLP")
+                logger.info("teacher-GAMLP")
                 teacher_model = gen_model_rlu(args, in_size, num_classes)
             elif args.method == "SAGN":
-                print("teacher-SAGN")
+                logger.info("teacher-SAGN")
                 label_in_feats = label_emb.shape[1] if label_emb is not None else n_classes
                 teacher_model = gen_model_sagn(args, in_size, label_in_feats, num_classes)
             teacher_model = teacher_model.to(device)
@@ -187,17 +209,17 @@ def run(args, device):
                 param.detach_()
 
         if args.ema == True and stage == 0:
-            print("use ema")
+            logger.info("use ema")
             ema = EMA(model, args.decay)
             ema.register()
         else:
             ema = None
-        print("# Params:", get_n_params(model))
+        logger.info(f"# Params: {get_n_params(model)}")
 
-        loss_fcn = nn.CrossEntropyLoss()
+        loss_fcn = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing_factor)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-        if args.giant and args.method == "SAGN":
+        if (args.giant or args.use_bert_x) and args.method == "SAGN":
             # Start training
             best_epoch = 0
             best_val = 0
@@ -216,7 +238,7 @@ def run(args, device):
                         )
                     else:
                         if epoch == (args.warm_up + 1):
-                            print("start mean teacher")
+                            logger.info("start mean teacher")
                         if (epoch - 1) % args.gap == 0 or epoch == (args.warm_up + 1):
                             preds = gen_output_torch(model, feats, all_loader, device, label_emb, args)
                             predict_prob = preds.softmax(dim=1)
@@ -284,6 +306,10 @@ def run(args, device):
                         )
                     end = time.time()
 
+                    trial.report(acc[2], epoch)
+                    if trial.should_prune():
+                        raise optuna.exceptions.TrialPruned()
+
                     if acc[1] > best_val:
                         best_epoch = epoch
                         best_val = acc[1]
@@ -299,10 +325,12 @@ def run(args, device):
                     log += "Best Val loss: {:.4f}, Accs: Train: {:.4f}, Val: {:.4f}, Test: {:.4f}, Best Val: {:.4f}, Best Test: {:.4f}".format(
                         best_val_loss, acc[0], acc[1], acc[2], best_val, best_test
                     )
-                    print(log)
+                    logger.info(log)
             preds = gen_output_torch(best_model, feats, all_loader, device, label_emb, args, ema)
             torch.save(preds, os.path.join(args.output_dir, checkpt_file + f"_{stage}_{args.method}.pt"))
-            print("Stage: {}, Best Epoch {}, Val {:.4f}, Test {:.4f}".format(stage, best_epoch, best_val, best_test))
+            logger.info(
+                "Stage: {}, Best Epoch {}, Val {:.4f}, Test {:.4f}".format(stage, best_epoch, best_val, best_test)
+            )
         else:
             # Start training
             best_epoch = 0
@@ -359,6 +387,7 @@ def run(args, device):
                             label_emb,
                             predict_prob,
                             args.gama,
+                            args,
                         )
                 else:
                     if epoch < (args.warm_up + 1):
@@ -378,7 +407,7 @@ def run(args, device):
                             )
                     else:
                         if epoch == (args.warm_up + 1):
-                            print("start mean teacher")
+                            logger.info("start mean teacher")
 
                         if (epoch - 1) % args.gap == 0 or epoch == (args.warm_up + 1):
                             preds = gen_output_torch(model, feats, all_loader, device, label_emb, args)
@@ -435,12 +464,18 @@ def run(args, device):
 
                     log += "\nValidation: Time(s): {:.4f}, ".format(val_end - end)
                     log += "Val {:.4f}, ".format(acc)
+
                     if acc > best_val:
                         best_epoch = epoch
                         best_val = acc
                         best_model = copy.deepcopy(model)
 
                         best_test = test(model, feats, labels, device, test_loader, evaluator, label_emb, args, ema)
+
+                        trial.report(best_test, epoch)
+                        if trial.should_prune():
+                            raise optuna.exceptions.TrialPruned()
+
                         preds = gen_output_torch(model, feats, all_loader, device, label_emb, args, ema)
 
                         torch.save(preds, os.path.join(args.output_dir, checkpt_file + f"_{stage}_{args.method}.pt"))
@@ -451,38 +486,75 @@ def run(args, device):
                         if count >= args.patience:
                             break
                     log += "Best Epoch {}, Val {:.4f}, Test {:.4f}".format(best_epoch, best_val, best_test)
-                print(log)
-            print("Best Epoch {}, Val {:.4f}, Test {:.4f}".format(best_epoch, best_val, best_test))
+                logger.info(log)
+            logger.info("Best Epoch {}, Val {:.4f}, Test {:.4f}".format(best_epoch, best_val, best_test))
     return best_val, best_test
 
 
-def main(args):
+def set_hp_search_space(args, trial):
+    args.stages = [1000]
+    args.patience = 300
+    args.lr = trial.suggest_float("lr", 1e-3, 1e-2)
+    args.hidden = trial.suggest_categorical("hidden", [256, 512, 768])
+    args.dropout = trial.suggest_float("dropout", 0.3, 0.8)
+    args.label_num_hops = trial.suggest_int("label_num_hops", 2, 10)
+    args.label_smoothing_factor = trial.suggest_float("label_smoothing_factor", 0.0, 0.3)
+    return args
+
+
+def objective(trial):
+    args = parse_args()
     if args.gpu < 0:
         device = "cpu"
     else:
         device = "cuda:{}".format(args.gpu)
 
-    val_accs = []
-    test_accs = []
-    for i in range(args.num_runs):
-        print(f"Run {i} start training")
-        set_seed(args.seed + i)
-        best_val, best_test = run(args, device)
-        # np.save(f"output/{args.dataset}/output_{i}.npy", preds.numpy())
-        val_accs.append(best_val)
-        test_accs.append(best_test)
-        print(f"Current Average val accuracy: {np.mean(val_accs):.4f}, " f"std: {np.std(val_accs):.4f}")
-        print(f"Current Average test accuracy: {np.mean(test_accs):.4f}, " f"std: {np.std(test_accs):.4f}")
+    set_seed(args.seed)
+    args = set_hp_search_space(args, trial)
+    best_val, best_test = run(args, device, trial)
+    logger.critical(f"val accuracy: {best_val:.4f}, test acc: {best_test:.4f}")
 
-    print(f"Average val accuracy: {np.mean(val_accs):.4f}, " f"std: {np.std(val_accs):.4f}")
-    print(f"Average test accuracy: {np.mean(test_accs):.4f}, " f"std: {np.std(test_accs):.4f}")
-
-    return np.mean(test_accs)
+    return best_test
 
 
-if __name__ == "__main__":
+def main(args):
+    if not args.load_study:
+        study = optuna.create_study(
+            direction="maximize",
+            storage="sqlite:///optuna.db",
+            study_name=f"ogbn-products_{args.method}_{args.suffix}",
+            load_if_exists=True,
+            pruner=optuna.pruners.SuccessiveHalvingPruner(),
+        )
+        study.optimize(objective, n_trials=20)
+    else:
+        study = optuna.load_study(
+            storage="sqlite:///optuna.db",
+            study_name=f"ogbn-products_{args.method}_{args.suffix}",
+        )
+    pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+    complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+    print("Study statistics: ")
+    print("  Number of finished trials: ", len(study.trials))
+    print("  Number of pruned trials: ", len(pruned_trials))
+    print("  Number of complete trials: ", len(complete_trials))
+
+    print("Best trial:")
+    trial = study.best_trial
+
+    print("  Value: ", trial.value)
+
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print("    {}: {}".format(key, value))
+
+
+def parse_args():
     parser = argparse.ArgumentParser(description="GAMLP/SAGN")
-    parser.add_argument("--hidden", type=int, default=512)
+    parser.add_argument("--load_study", action="store_true", default=False)
+    parser.add_argument("--suffix", type=str, default="")
+    parser.add_argument("--hidden", type=int, default=768)
     parser.add_argument("--num_hops", type=int, default=5, help="number of hops")
     parser.add_argument("--label_num_hops", type=int, default=9, help="number of hops for label")
     parser.add_argument("--seed", type=int, default=0, help="the seed used in the training")
@@ -516,7 +588,7 @@ if __name__ == "__main__":
     parser.add_argument("--method", type=str, default="R_GAMLP_RLU", help="the model to use")
     parser.add_argument("--use-emb", type=str, default=True)
     parser.add_argument("--root", type=str, default="")
-    parser.add_argument("--data_dir", type=str, default="../cogdl_data")
+    parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument(
         "--use-rlu", action="store_true", default=True, help="whether to use the reliable data distillation"
     )
@@ -560,10 +632,20 @@ if __name__ == "__main__":
     parser.add_argument("--gap", type=int, default=20)
 
     parser.add_argument("--giant", action="store_true")
+    parser.add_argument("--giant_path", type=str, default=None)
     parser.add_argument("--use_bert_x", action="store_true")
+    parser.add_argument("--bert_x_dir", type=str, default=None)
     parser.add_argument("--lm_model_type", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--label_smoothing_factor", type=float, default=0.0)
 
     args = parser.parse_args()
-    print(args)
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    set_logging()
+    logger.info(args)
     main(args)

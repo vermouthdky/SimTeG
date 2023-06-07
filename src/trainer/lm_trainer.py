@@ -1,14 +1,17 @@
 import gc
 import logging
 import os.path as osp
+from typing import List, Optional
 
 import evaluate
 import numpy as np
 import torch
 import torch.distributed as dist
+from torch.utils.data import DataLoader
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
 from transformers import TrainingArguments
+from transformers.trainer_utils import PredictionOutput
 
 from .trainer import Trainer
 
@@ -98,6 +101,8 @@ class LMTrainer(Trainer):
             local_rank=self.rank,
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
+            deepspeed=self.args.deepspeed,
+            fp16=self.args.fp16,
         )
         return InnerTrainer(
             model=self.model,

@@ -3,7 +3,7 @@ dataset=$4
 suffix=$6
 
 # set distributed env
-WORLD_SIZE=4
+WORLD_SIZE=$(nvidia-smi --list-gpus | wc -l)
 MASTER_PORT=$((1 + $RANDOM % 100000))
 
 project_dir='.'

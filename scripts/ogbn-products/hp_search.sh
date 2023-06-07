@@ -1,4 +1,4 @@
-# bash scripts/hp_search/peft_lm.sh ogbn-products all-MiniLM-L6-v2
+bash scripts/hp_search/peft_lm.sh ogbn-products all-MiniLM-L6-v2
 # bash scripts/hp_search/peft_lm.sh ogbn-products all-mpnet-base-v2
 # bash scripts/hp_search/peft_lm.sh ogbn-products all-roberta-large-v1
 # bash scripts/hp_search/peft_lm.sh ogbn-products e5-large

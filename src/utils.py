@@ -10,6 +10,13 @@ import torch
 import torch.distributed as dist
 
 
+def dict_append(d: dict, u: dict):
+    for key, value in u.items():
+        if key in d.keys():
+            d[key].append(value)
+    return d
+
+
 @contextmanager
 def dist_barrier_context():
     rank = int(os.getenv("RANK", -1))

@@ -44,14 +44,24 @@ class Link_E5_model(nn.Module):
         last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
         return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
 
-    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
+    def forward(self, input_ids, att_mask, labels=None):
+        only_infer = len(input_ids.shape) == 2
+        if only_infer:
+            return self.infer_h(input_ids, att_mask)
+        else:
+            batch_size, _, input_ids = input_ids.shape
+            input_ids, att_mask = input_ids.view(-1, input_ids), att_mask.view(-1, input_ids)
+            h = self.infer_h(input_ids, att_mask)
+            h = h.view(batch_size, -1, h.shape[-1])
+            # predict logits
+            pos_out = self.link_predict(h[:, 0, :], h[:, 1, :])
+            neg_out = self.link_predict(h[:, 0, :], h[:, 2, :])
+            return pos_out, neg_out
+
+    def infer_h(self, input_ids, att_mask):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         out = self.average_pool(bert_out.last_hidden_state, att_mask)
-        if return_hidden:
-            sentence_embeddings = F.normalize(out, p=2, dim=1)
-            return out, sentence_embeddings
-        else:
-            return out
+        return F.normalize(out, p=2, dim=1)
 
     def link_predict(self, x_i, x_j):
         return self.head(x_i, x_j)
@@ -82,6 +92,20 @@ class Link_Sentence_Transformer(nn.Module):
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
     def forward(self, input_ids, att_mask, labels=None):
+        only_infer = len(input_ids.shape) == 2
+        if only_infer:
+            return self.infer_h(input_ids, att_mask)
+        else:
+            batch_size, _, hidden_size = input_ids.shape  # num_samples == 3
+            input_ids, att_mask = input_ids.view(-1, hidden_size), att_mask.view(-1, hidden_size)
+            h = self.infer_h(input_ids, att_mask)
+            h = h.view(batch_size, _, -1)
+            # predict logits
+            pos_out = self.link_predict(h[:, 0, :], h[:, 1, :])
+            neg_out = self.link_predict(h[:, 0, :], h[:, 2, :])
+            return pos_out, neg_out
+
+    def infer_h(self, input_ids, att_mask):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
         out = self.mean_pooling(bert_out, att_mask)
         out = F.normalize(out, p=2, dim=1)
