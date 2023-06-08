@@ -4,7 +4,7 @@ suffix=fix
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --pretrained_repo sentence-transformers/${model_type} \
-    --eval_batch_size 500 \
+    --eval_batch_size 200 \
     --mode 'test'
 
 # lm_type=${model_type}

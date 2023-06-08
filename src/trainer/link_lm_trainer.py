@@ -172,7 +172,6 @@ class LinkLMTrainer(Trainer):
             for perm in DataLoader(range(source.size(0)), 10000):
                 src, dst = source[perm], target[perm]
                 pos_preds += [self.model.link_predict(x_embs[src], x_embs[dst]).squeeze().cpu()]
-                # pos_preds = torch.dot(x_embs[src], x_embs[dst])
             pos_pred = torch.cat(pos_preds, dim=0)
 
             neg_preds = []
@@ -180,24 +179,23 @@ class LinkLMTrainer(Trainer):
             target_neg = target_neg.view(-1)
             for perm in DataLoader(range(source.size(0)), 10000):
                 src, dst_neg = source[perm], target_neg[perm]
-                # neg_preds += [self.model.link_predict(x_embs[src], x_embs[dst_neg]).squeeze().cpu()]
-                neg_preds += torch.dot(x_embs[src], x_embs[dst_neg])
+                neg_preds += [self.model.link_predict(x_embs[src], x_embs[dst_neg]).squeeze().cpu()]
             neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
 
-            mrr = evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
-            logger.info(mrr)
-            return mrr["mrr_list"].mean().item()
+            results = evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
+            return {key[:-5]: value.mean().item() for key, value in results.items()}
 
-        return dict(valid_mrr=test_split("valid"), test_mrr=test_split("test"))
+        return test_split("valid"), test_split("test")
 
     def inference_and_evaluate(self, dataset):
         embs_path = osp.join(self.args.output_dir, "cached_embs")
         x_embs = self.inference(dataset, embs_path)
-        results = self._evaluate(x_embs)
-        logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
+        valid_results, test_results = self._evaluate(x_embs)
+        logger.info(f"Valid Metrics:: " + "".join("{}: {:.4f} ".format(k, v) for k, v in valid_results.items()))
+        logger.info(f"Test Metrics:: " + "".join("{}: {:.4f} ".format(k, v) for k, v in test_results.items()))
         gc.collect()
         torch.cuda.empty_cache()
-        return results  # logits_embs is None
+        return valid_results, test_results  # logits_embs is None
 
     def train(self, return_value="valid"):
         self.prepare()
@@ -206,7 +204,7 @@ class LinkLMTrainer(Trainer):
             self.train_once()
 
         logger.warning(f"\n*************** Start inference and testing ***************\n")
-        results = self.inference_and_evaluate(self.all_set)
+        valid_results, test_results = self.inference_and_evaluate(self.all_set)
         gc.collect()
         torch.cuda.empty_cache()
-        return results["test_mrr"], results["valid_mrr"]
+        return valid_results, test_results

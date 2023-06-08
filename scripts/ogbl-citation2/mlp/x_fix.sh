@@ -8,12 +8,14 @@ bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --s
     --n_exps 10 \
     --single_gpu 0 \
     --lm_type $lm_model_type \
-    --gnn_batch_size 1000 \
-    --gnn_eval_batch_size 10000 \
+    --gnn_batch_size 50000 \
+    --gnn_eval_batch_size 50000 \
     --gnn_epochs 100 \
-    --gnn_dropout 0.0 \
-    --gnn_lr 0.0005 \
+    --gnn_dropout 0.2 \
+    --gnn_lr 0.01 \
     --gnn_num_layers 3 \
     --gnn_weight_decay 2e-6 \
     --use_bert_x \
-    --bert_x_dir $bert_x_dir
+    --bert_x_dir $bert_x_dir \
+    --gnn_eval_interval 5 \
+    --gnn_eval_warmup 0

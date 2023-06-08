@@ -1,22 +1,15 @@
 import os
 
-import numpy as np
+import pandas as pd
 
-lms = ["all-MiniLM-L6-v2", "all-roberta-large-v1", "e5-large"]
+citation_text = "../data/ogbl_citation2_text/raw/idx_title_abs.csv.gz"
+citation_mapping = "../data/ogbl_citation2_text/mapping/nodeidx2paperid.csv.gz"
+paper_mapping = "../data/nodeidx2paperid.csv.gz"
 
-dir = os.path.join("out", "ogbn-products", "SAGN_SCR", "main_X_")
+citation_text_df = pd.read_csv(citation_text)
 
-for lm in lms:
-    test_acc_list, valid_acc_list = [], []
-    for i in range(10):
-        log_dir = dir + lm + f"/log_{i}.txt"
-        print(log_dir)
-        with open(log_dir, "r") as f:
-            lines = f.readlines()
-            test_acc = float(lines[-1].split(" ")[-3][:-1])
-            valid_acc = float(lines[-2].split(" ")[-3][:-1])
-            test_acc_list.append(test_acc)
-            valid_acc_list.append(valid_acc)
-    test_accs, valid_accs = np.array(test_acc_list), np.array(valid_acc_list)
-    print(f"test_acc: {test_accs.mean()} \(\pm\) {test_accs.std()}")
-    print(f"valid_acc: {valid_accs.mean()} \(\pm\) {valid_accs.std()}")
+citation_idx_df = pd.read_csv(citation_mapping)
+paper_idx_df = pd.read_csv(paper_mapping)
+
+
+__import__("ipdb").set_trace()

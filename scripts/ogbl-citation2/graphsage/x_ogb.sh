@@ -10,9 +10,9 @@ bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --s
     --gnn_batch_size 512 \
     --gnn_eval_batch_size 4096 \
     --gnn_epochs 100 \
-    --gnn_dropout 0.0 \
-    --gnn_lr 0.01 \
-    --gnn_num_layers 3 \
+    --gnn_dropout 0.2 \
+    --gnn_lr 0.001 \
+    --gnn_num_layers 2 \
     --gnn_weight_decay 2e-6 \
-    --gnn_eval_warmup 50 \
+    --gnn_eval_warmup 30 \
     --gnn_eval_interval 10

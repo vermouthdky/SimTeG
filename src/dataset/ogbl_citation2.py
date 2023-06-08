@@ -68,7 +68,8 @@ class OgblCitation2WithText(OgbWithText):
 
         # subset with subset_node_idx and relable nodes
         subset_node_idx = self._get_subset_node_idx()
-
+        # ipdb> subset[2144341]
+        # tensor(2131446)
         num_nodes, edge_index = 0, {}
         for key in split_idx.keys():
             edge_index[key] = torch.stack([split_idx[key]["source_node"], split_idx[key]["target_node"]], dim=0)
@@ -92,6 +93,7 @@ class OgblCitation2WithText(OgbWithText):
             split_idx[key]["source_node"], split_idx[key]["target_node"] = edge_index[key][0], edge_index[key][1]
             if key in ["valid", "test"]:
                 split_idx[key]["target_node_neg"] = edge_index[key][2:].t()
+
         return split_idx
 
     @property
@@ -152,6 +154,7 @@ class OgblCitation2WithText(OgbWithText):
 
     def _mapping_and_tokenizing(self):
         df = pd.read_csv(osp.join(self.raw_dir, "idx_title_abs.csv.gz"))
+        df.sort_values(by="node idx", inplace=True)
         df["abstitle"] = "title: " + df["title"] + "; " + "abstract: " + df["abstract"]
         input_ids, attention_mask, truncated_size = [], [], 10000
         text_list = df["abstitle"].values.tolist()
@@ -175,20 +178,20 @@ if __name__ == "__main__":
     set_logging()
     pyg_dataset = OgblCitation2WithText("../data")
     data = pyg_dataset.data
-    split_edge = pyg_dataset.get_edge_split()
-    for split in split_edge.keys():
-        source_max = split_edge[split]["source_node"].max()
-        target_max = split_edge[split]["target_node"].max()
-        logger.info(f"max source node id in {split}: {source_max}")
-        logger.info(f"max target node id in {split}: {target_max}")
-    num_edge_list = []
-    for split in split_edge.keys():
-        num_edge = split_edge[split]["source_node"].size(0)
-        num_edge_list.append(num_edge)
-    print(num_edge_list)
-    num_edges = sum(num_edge_list)
-    print(num_edges)
-    print(data.x.size(0) / num_edges)
-    print([_ / num_edges for _ in num_edge_list])
-    print(data.x.shape)
-    exit(-1)
+    # split_edge = pyg_dataset.get_edge_split()
+    # for split in split_edge.keys():
+    #     source_max = split_edge[split]["source_node"].max()
+    #     target_max = split_edge[split]["target_node"].max()
+    #     logger.info(f"max source node id in {split}: {source_max}")
+    #     logger.info(f"max target node id in {split}: {target_max}")
+    # num_edge_list = []
+    # for split in split_edge.keys():
+    #     num_edge = split_edge[split]["source_node"].size(0)
+    #     num_edge_list.append(num_edge)
+    # print(num_edge_list)
+    # num_edges = sum(num_edge_list)
+    # print(num_edges)
+    # print(data.x.size(0) / num_edges)
+    # print([_ / num_edges for _ in num_edge_list])
+    # print(data.x.shape)
+    # exit(-1)
