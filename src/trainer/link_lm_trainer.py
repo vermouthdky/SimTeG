@@ -1,11 +1,13 @@
 import gc
 import logging
+import os
 import os.path as osp
 
 import evaluate
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from ogb.linkproppred import Evaluator
 from torch.utils.data import DataLoader
 from torch_geometric.utils import subgraph
@@ -43,7 +45,8 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         src, dst, neg_dst = self.src[index], self.dst[index], torch.randint(self.num_nodes, (1,))
         all_idx = torch.tensor([src, dst, neg_dst], dtype=torch.long)
-        data = dict(input_ids=self.input_ids[all_idx], att_mask=self.att_mask[all_idx])
+        labels = torch.tensor([1, 0], dtype=torch.long)
+        data = dict(input_ids=self.input_ids[all_idx], att_mask=self.att_mask[all_idx], labels=labels)
         return data
 
 
@@ -65,7 +68,13 @@ class InnerTrainer(HugTrainer):
 
     def compute_loss(self, model, inputs, return_outputs=False):
         eps = 1e-15
+        labels = inputs.pop("labels")
         input_ids, att_mask = inputs.pop("input_ids"), inputs.pop("att_mask")
+
+        if len(input_ids.shape) == 2:
+            x_embs = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
+            return (None, x_embs)
+
         pos_out, neg_out = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
         pos_loss = -torch.log(pos_out + eps).mean()
         neg_loss = -torch.log(1 - neg_out + eps).mean()
@@ -92,12 +101,18 @@ class LinkLMTrainer(Trainer):
         return train_set, valid_set, all_set
 
     def compute_metrics(self, eval_pred):
+        # evaluator = Evaluator(name="ogbl-citation2")
         pos_out, neg_out = eval_pred[0]
+        if self.rank <= 0:
+            __import__("ipdb").set_trace()
+        else:
+            dist.barrier()
         pos_out, neg_out = torch.from_numpy(pos_out), torch.from_numpy(neg_out)
         pos_target, neg_target = torch.ones_like(pos_out, dtype=torch.bool), torch.zeros_like(neg_out, dtype=torch.bool)
         predict = torch.cat([pos_out, neg_out])
         target = torch.cat([pos_target, neg_target])
-        return {"mrr": mrr(predict, target)}
+        # results = evaluator.eval({"y_pred_pos": pos_out, "y_pred_neg": neg_out})
+        return {"eval_mrr": mrr(predict, target)}
 
     def _prepare_trainer(self):
         # prepare training args
@@ -117,7 +132,7 @@ class LinkLMTrainer(Trainer):
             learning_rate=self.args.lr,
             weight_decay=self.args.weight_decay,
             load_best_model_at_end=True,
-            metric_for_best_model="mrr",
+            metric_for_best_model="eval_mrr",
             dataloader_drop_last=True,
             gradient_accumulation_steps=self.args.accum_interval,
             label_smoothing_factor=self.args.label_smoothing,
@@ -131,7 +146,7 @@ class LinkLMTrainer(Trainer):
             local_rank=self.rank,
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
-            label_names=[],
+            label_names=["labels"],
             deepspeed=self.args.deepspeed,
             fp16=self.args.fp16,
         )
@@ -164,22 +179,24 @@ class LinkLMTrainer(Trainer):
         evaluator = Evaluator(name="ogbl-citation2")
 
         def test_split(split):
-            source = self.split_idx[split]["source_node"].to(self.rank)
-            target = self.split_idx[split]["target_node"].to(self.rank)
-            target_neg = self.split_idx[split]["target_node_neg"].to(self.rank)
+            source = self.split_idx[split]["source_node"].contiguous()
+            target = self.split_idx[split]["target_node"].contiguous()
+            target_neg = self.split_idx[split]["target_node_neg"].contiguous()
 
             pos_preds = []
-            for perm in DataLoader(range(source.size(0)), 10000):
+            for perm in DataLoader(range(source.size(0)), 50000):
                 src, dst = source[perm], target[perm]
-                pos_preds += [self.model.link_predict(x_embs[src], x_embs[dst]).squeeze().cpu()]
+                x_src, x_dst = x_embs[src].to(self.rank), x_embs[dst].to(self.rank)
+                pos_preds += [self.trainer.model.link_predict(x_src, x_dst).squeeze().cpu()]
             pos_pred = torch.cat(pos_preds, dim=0)
 
             neg_preds = []
             source = source.view(-1, 1).repeat(1, 1000).view(-1)
-            target_neg = target_neg.view(-1)
-            for perm in DataLoader(range(source.size(0)), 10000):
+            target_neg = target_neg.reshape(-1)
+            for perm in DataLoader(range(source.size(0)), 50000):
                 src, dst_neg = source[perm], target_neg[perm]
-                neg_preds += [self.model.link_predict(x_embs[src], x_embs[dst_neg]).squeeze().cpu()]
+                x_src, x_dst_neg = x_embs[src].to(self.rank), x_embs[dst_neg].to(self.rank)
+                neg_preds += [self.trainer.model.link_predict(x_src, x_dst_neg).squeeze().cpu()]
             neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
 
             results = evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
@@ -198,6 +215,7 @@ class LinkLMTrainer(Trainer):
         return valid_results, test_results  # logits_embs is None
 
     def train(self, return_value="valid"):
+        dist.barrier()
         self.prepare()
         assert self.args.mode in ["train", "test"]
         if self.args.mode == "train":

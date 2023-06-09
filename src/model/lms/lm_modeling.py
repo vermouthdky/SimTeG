@@ -49,10 +49,6 @@ class T5_model(nn.Module):
     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, decoder_input_ids=input_ids, attention_mask=att_mask)
         sentence_embeddings = self.mean_pooling(bert_out, att_mask)
-        if int(os.getenv("RANK", -1)):
-            __import__("ipdb").set_trace()
-        else:
-            torch.distributed.barrier()
         out = self.head(sentence_embeddings)
 
         if return_hidden:

@@ -68,8 +68,6 @@ class OgblCitation2WithText(OgbWithText):
 
         # subset with subset_node_idx and relable nodes
         subset_node_idx = self._get_subset_node_idx()
-        # ipdb> subset[2144341]
-        # tensor(2131446)
         num_nodes, edge_index = 0, {}
         for key in split_idx.keys():
             edge_index[key] = torch.stack([split_idx[key]["source_node"], split_idx[key]["target_node"]], dim=0)

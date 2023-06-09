@@ -67,7 +67,7 @@ def main(args):
 
     if args.dataset in LINK_PRED_DATASETS:
         val_metrics_list = {"mrr": [], "hits@1": [], "hits@3": [], "hits@10": []}
-        test_metrics_list = val_metrics_list.copy()
+        test_metrics_list = {"mrr": [], "hits@1": [], "hits@3": [], "hits@10": []}
         for i, random_seed in enumerate(range(args.n_exps)):
             random_seed += args.start_seed
             set_seed(random_seed)
@@ -84,7 +84,7 @@ def main(args):
             print_metrics(test_metrics_list, "Current Test")
         cleanup()
         print_metrics(val_metrics_list, "Final Val")
-        print_metrics(val_metrics_list, "Final Test")
+        print_metrics(test_metrics_list, "Final Test")
 
     else:
         test_acc_list = []
