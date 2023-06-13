@@ -1,14 +1,11 @@
-from typing import Optional
-
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.parameter import Parameter
 from torch_geometric.nn import SAGEConv
+from torch_geometric.typing import SparseTensor
 from tqdm.auto import tqdm
 
 from .modules.GCN import GCN as PureGCN
-from .modules.GraphSAGE import SAGE
 
 
 class LinkGraphSAGE(torch.nn.Module):
@@ -75,11 +72,8 @@ class LinkGCN(nn.Module):
         self.gnn_model.reset_parameters()
 
     def forward(self, x, edge_index):
+        assert isinstance(edge_index, SparseTensor)
         return self.gnn_model(x, edge_index)
-
-    @torch.no_grad()
-    def inference(self, x_all, device, subgraph_loader):
-        return self.gnn_model.inference(x_all, device, subgraph_loader)
 
 
 class LinkMLP(nn.Module):

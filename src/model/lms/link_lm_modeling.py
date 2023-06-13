@@ -49,13 +49,17 @@ class Link_E5_model(nn.Module):
         if only_infer:
             return self.infer_h(input_ids, att_mask)
         else:
-            batch_size, _, input_ids = input_ids.shape
-            input_ids, att_mask = input_ids.view(-1, input_ids), att_mask.view(-1, input_ids)
+            batch_size, num_samples, input_size = input_ids.shape  # num_samples == 1 + 1 + num_dst_neg
+            num_neg_samples = num_samples - 2
+            input_ids, att_mask = input_ids.view(-1, input_size), att_mask.view(-1, input_size)
             h = self.infer_h(input_ids, att_mask)
-            h = h.view(batch_size, -1, h.shape[-1])
+            h = h.view(batch_size, num_samples, -1)
+            hidden_size = h.shape[-1]
             # predict logits
             pos_out = self.link_predict(h[:, 0, :], h[:, 1, :])
-            neg_out = self.link_predict(h[:, 0, :], h[:, 2, :])
+            src_h = h[:, 0, :].repeat_interleave(num_neg_samples, dim=0).reshape(-1, hidden_size)
+            dst_h = h[:, 2:, :].reshape(-1, hidden_size)
+            neg_out = self.link_predict(src_h, dst_h).view(batch_size, -1)
             return pos_out, neg_out
 
     def infer_h(self, input_ids, att_mask):
@@ -88,7 +92,8 @@ class Link_Sentence_Transformer(nn.Module):
 
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        data_type = token_embeddings.dtype
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).to(data_type)
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
     def forward(self, input_ids, att_mask, labels=None):
@@ -96,13 +101,17 @@ class Link_Sentence_Transformer(nn.Module):
         if only_infer:
             return self.infer_h(input_ids, att_mask)
         else:
-            batch_size, _, hidden_size = input_ids.shape  # num_samples == 3
-            input_ids, att_mask = input_ids.view(-1, hidden_size), att_mask.view(-1, hidden_size)
+            batch_size, num_samples, input_size = input_ids.shape  # num_samples == 1 + 1 + num_dst_neg
+            num_neg_samples = num_samples - 2
+            input_ids, att_mask = input_ids.view(-1, input_size), att_mask.view(-1, input_size)
             h = self.infer_h(input_ids, att_mask)
-            h = h.view(batch_size, _, -1)
+            h = h.view(batch_size, num_samples, -1)
+            hidden_size = h.shape[-1]
             # predict logits
             pos_out = self.link_predict(h[:, 0, :], h[:, 1, :])
-            neg_out = self.link_predict(h[:, 0, :], h[:, 2, :])
+            src_h = h[:, 0, :].repeat_interleave(num_neg_samples, dim=0).reshape(-1, hidden_size)
+            dst_h = h[:, 2:, :].reshape(-1, hidden_size)
+            neg_out = self.link_predict(src_h, dst_h).view(batch_size, -1)
             return pos_out, neg_out
 
     def infer_h(self, input_ids, att_mask):

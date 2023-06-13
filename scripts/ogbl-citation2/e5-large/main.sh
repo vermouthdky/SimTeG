@@ -6,13 +6,16 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --pretrained_repo sentence-transformers/${model_type} \
     --lr 5e-5 \
     --weight_decay 1e-5 \
-    --batch_size 20 \
-    --eval_batch_size 200 \
+    --batch_size 10 \
+    --eval_batch_size 10 \
     --accum_interval 5 \
-    --epochs 10 \
+    --eval_patience 100000 \
+    --epochs 2 \
     --warmup_ratio 0.15 \
     --lr_scheduler_type linear \
-    --use_peft
+    --use_peft \
+    --deepspeed ds_config.json \
+    --fp16
 
 # lm_type=${model_type}
 # bert_x_dir=out/${dataset}/${lm_type}/${suffix}/cached_embs/iter_0_x_embs.pt

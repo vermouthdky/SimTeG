@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from ogb.linkproppred import Evaluator
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from torch_geometric.utils import subgraph
 from torchmetrics.functional import retrieval_reciprocal_rank as mrr
 from transformers import EarlyStoppingCallback
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 #     node_idx[src_dst_idx] = torch.arange(src_dst_idx.size(0))
 #     return node_idx[src], node_idx[dst], node_idx[neg_dst]
 
+NUM_NEG_PER_SAMPLE = 1000
+
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, input_ids, att_mask, src, dst, neg_dst):
@@ -43,9 +45,15 @@ class Dataset(torch.utils.data.Dataset):
         return self.src.size(0)
 
     def __getitem__(self, index):
-        src, dst, neg_dst = self.src[index], self.dst[index], torch.randint(self.num_nodes, (1,))
-        all_idx = torch.tensor([src, dst, neg_dst], dtype=torch.long)
-        labels = torch.tensor([1, 0], dtype=torch.long)
+        src, dst = self.src[index], self.dst[index]
+        if self.neg_dst is None:  # train set
+            neg_dst = torch.randint(self.num_nodes, (1,))
+        else:
+            # perm = torch.randint(NUM_NEG_PER_SAMPLE, (NUM_NEG_PER_SAMPLE,))  # for approxiamate evalation
+            neg_dst = self.neg_dst[index]
+        all_idx = torch.tensor([src, dst], dtype=torch.long)
+        all_idx = torch.cat([all_idx, neg_dst])
+        labels = torch.tensor([1] + [0] * NUM_NEG_PER_SAMPLE, dtype=torch.long)
         data = dict(input_ids=self.input_ids[all_idx], att_mask=self.att_mask[all_idx], labels=labels)
         return data
 
@@ -75,8 +83,20 @@ class InnerTrainer(HugTrainer):
             x_embs = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
             return (None, x_embs)
 
-        pos_out, neg_out = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
-        pos_loss = -torch.log(pos_out + eps).mean()
+        if return_outputs:  # evaluation
+            pos_preds, neg_preds = None, []
+            for perm in DataLoader(torch.range(2, NUM_NEG_PER_SAMPLE), batch_size=10, shuffle=False):
+                perm = torch.cat((torch.tensor([0, 1]), perm)).long()
+                batch_input_ids, batch_att_mask = input_ids[:, perm, :], att_mask[:, perm, :]
+                with torch.no_grad():
+                    pos_pred, neg_pred = model(batch_input_ids.cuda(), batch_att_mask.cuda())
+                pos_preds = pos_pred
+                neg_preds.append(neg_pred)
+            pos_out, neg_out = pos_preds, torch.cat(neg_preds, dim=-1)
+        else:
+            pos_out, neg_out = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
+
+        pos_loss = -torch.log(pos_out + eps).mean() / (input_ids.size(1) - 2)
         neg_loss = -torch.log(1 - neg_out + eps).mean()
         loss = pos_loss + neg_loss
         if return_outputs:
@@ -88,10 +108,12 @@ class LinkLMTrainer(Trainer):
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test"]
         src, dst = self.split_idx[mode]["source_node"], self.split_idx[mode]["target_node"]
-        if mode == "train":
-            neg_dst = torch.randint(0, self.data.num_nodes, (src.size(0),))
-        else:
-            neg_dst = self.split_idx[mode]["target_node_neg"]
+        # use the fist 100 for validation
+        neg_dst = None if mode == "train" else self.split_idx[mode]["target_node_neg"]
+        if mode == "valid":
+            logger.warning("Use 0.01 of the validation set for fast evaluation")
+            num_samples = src.size(0) // 100
+            src, dst, neg_dst = src[:num_samples], dst[:num_samples], neg_dst[:num_samples]
         dataset = Dataset(self.data.input_ids, self.data.attention_mask, src=src, dst=dst, neg_dst=neg_dst)
         return dataset
 
@@ -100,19 +122,22 @@ class LinkLMTrainer(Trainer):
         all_set = InferenceDataset(self.data.input_ids, self.data.attention_mask)
         return train_set, valid_set, all_set
 
+    def _prepare_model(self):
+        model_class = get_model_class(self.args.model_type, self.args.task_type)
+        model = model_class(self.args)
+        n_params = sum(p.numel() for p in model.parameters())
+        logger.warning(f"Model: {self.args.model_type}, Num of Params: {n_params}")
+        if self.args.use_cache:
+            logger.warning(f"Loading model checkpoint from {self.ckpt_path}")
+            model.load_state_dict(torch.load(self.ckpt_path))
+        return model
+
     def compute_metrics(self, eval_pred):
-        # evaluator = Evaluator(name="ogbl-citation2")
+        evaluator = Evaluator(name="ogbl-citation2")
         pos_out, neg_out = eval_pred[0]
-        if self.rank <= 0:
-            __import__("ipdb").set_trace()
-        else:
-            dist.barrier()
         pos_out, neg_out = torch.from_numpy(pos_out), torch.from_numpy(neg_out)
-        pos_target, neg_target = torch.ones_like(pos_out, dtype=torch.bool), torch.zeros_like(neg_out, dtype=torch.bool)
-        predict = torch.cat([pos_out, neg_out])
-        target = torch.cat([pos_target, neg_target])
-        # results = evaluator.eval({"y_pred_pos": pos_out, "y_pred_neg": neg_out})
-        return {"eval_mrr": mrr(predict, target)}
+        results = evaluator.eval({"y_pred_pos": pos_out.view(-1), "y_pred_neg": neg_out})
+        return {f"eval_{key[:-5]}": value.mean() for key, value in results.items()}
 
     def _prepare_trainer(self):
         # prepare training args
@@ -149,6 +174,7 @@ class LinkLMTrainer(Trainer):
             label_names=["labels"],
             deepspeed=self.args.deepspeed,
             fp16=self.args.fp16,
+            resume_from_checkpoint=True,
         )
         return InnerTrainer(
             data=self.data,
@@ -178,13 +204,14 @@ class LinkLMTrainer(Trainer):
     def _evaluate(self, x_embs):
         evaluator = Evaluator(name="ogbl-citation2")
 
+        @torch.no_grad()
         def test_split(split):
             source = self.split_idx[split]["source_node"].contiguous()
             target = self.split_idx[split]["target_node"].contiguous()
             target_neg = self.split_idx[split]["target_node_neg"].contiguous()
 
             pos_preds = []
-            for perm in DataLoader(range(source.size(0)), 50000):
+            for perm in DataLoader(range(source.size(0)), 5000):
                 src, dst = source[perm], target[perm]
                 x_src, x_dst = x_embs[src].to(self.rank), x_embs[dst].to(self.rank)
                 pos_preds += [self.trainer.model.link_predict(x_src, x_dst).squeeze().cpu()]
@@ -193,13 +220,13 @@ class LinkLMTrainer(Trainer):
             neg_preds = []
             source = source.view(-1, 1).repeat(1, 1000).view(-1)
             target_neg = target_neg.reshape(-1)
-            for perm in DataLoader(range(source.size(0)), 50000):
+            for perm in DataLoader(range(source.size(0)), 5000):
                 src, dst_neg = source[perm], target_neg[perm]
                 x_src, x_dst_neg = x_embs[src].to(self.rank), x_embs[dst_neg].to(self.rank)
                 neg_preds += [self.trainer.model.link_predict(x_src, x_dst_neg).squeeze().cpu()]
             neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
 
-            results = evaluator.eval({"y_pred_pos": pos_pred, "y_pred_neg": neg_pred})
+            results = evaluator.eval({"y_pred_pos": pos_pred.view(-1), "y_pred_neg": neg_pred})
             return {key[:-5]: value.mean().item() for key, value in results.items()}
 
         return test_split("valid"), test_split("test")

@@ -47,8 +47,10 @@ class OgbWithText(InMemoryDataset):
         self.data, self.slices = torch.load(self.processed_paths[0])
         # add input_ids and attention_mask
         if self.should_tokenize:
-            with dist_barrier_context():
-                self._data.input_ids, self._data.attention_mask = self.mapping_and_tokenizing()
+            if not osp.exists(self.tokenized_path) and rank <= 0:
+                _ = self.mapping_and_tokenizing()
+            dist.barrier()
+            self._data.input_ids, self._data.attention_mask = self.load_cached_tokens()
 
     @property
     def raw_file_names(self):
@@ -67,16 +69,22 @@ class OgbWithText(InMemoryDataset):
     def _mapping_and_tokenizing(self):
         raise NotImplementedError
 
-    def mapping_and_tokenizing(self):
+    @property
+    def tokenized_path(self):
         tokenizer_name = "_".join(self.tokenizer.name_or_path.split("/"))
         tokenized_path = osp.join(self.root, "processed", f"{tokenizer_name}.pt")
-        if osp.exists(tokenized_path):
-            logger.info("using cached tokenized data in {}".format(tokenized_path))
-            text_encoding = torch.load(tokenized_path)
+        return tokenized_path
+
+    def load_cached_tokens(self):
+        if osp.exists(self.tokenized_path):
+            logger.info("using cached tokenized data in {}".format(self.tokenized_path))
+            text_encoding = torch.load(self.tokenized_path)
             return text_encoding["input_ids"], text_encoding["attention_mask"]
+
+    def mapping_and_tokenizing(self):
         input_ids, attention_mask = self._mapping_and_tokenizing()
-        torch.save({"input_ids": input_ids, "attention_mask": attention_mask}, tokenized_path)
-        logger.info("save the tokenized data to {}".format(tokenized_path))
+        torch.save({"input_ids": input_ids, "attention_mask": attention_mask}, self.tokenized_path)
+        logger.info("save the tokenized data to {}".format(self.tokenized_path))
         return input_ids, attention_mask
 
     def save_metainfo(self):
