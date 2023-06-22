@@ -7,27 +7,33 @@ import torch
 from sklearn.manifold import TSNE
 
 from src.args import parse_args
-from src.dataset import load_dataset
+from src.dataset import load_data_bundle
 from src.utils import dataset2foldername
 
 path = "out/ogbn-arxiv/GBert/"
 
 
-def load_data(use_bert_x=False):
-    args = parse_args()
-    dataset = load_dataset("ogbn-arxiv", root=args.data_folder, tokenizer=args.pretrained_repo)
-    data = dataset.data
-    labels = data.y.view(-1)
-    x = data.x
-    saved_dir = osp.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
-    bert_x = torch.load(saved_dir)
-    return x, bert_x, labels
+def load_data(args):
+    assert args.dataset in ["ogbn-arxiv", "ogbl-citation2", "ogbn-products"]
+    tokenize = False
+    data, split_idx, evaluator = load_data_bundle(
+        args.dataset, root=args.data_folder, tokenizer=args.pretrained_repo, tokenize=tokenize
+    )
+    labels = data.y
+    if args.use_bert_x:
+        # saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
+        bert_x = torch.load(args.bert_x_dir)
+        assert bert_x.size(0) == data.x.size(0)
+        print(f"using bert x loaded from {args.bert_x_dir}")
+        data.x = bert_x.to(torch.float)
+    return bert_x, labels
 
 
 # Load your feature matrix into a PyTorch tensor (N, D)
 def visualize():
+    args = parse_args()
     fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-    x, bert_x, labels = load_data()
+    x, labels = load_data(args)
     indices = torch.randperm(labels.size(0))[:500]
     for i, x in enumerate([x, bert_x]):
         sampled_features = x[indices]

@@ -151,6 +151,7 @@ class LinkLMTrainer(Trainer):
             optim="adamw_torch",
             evaluation_strategy="steps",
             eval_steps=eval_steps,
+            eval_delay=self.args.eval_delay * eval_steps,
             save_strategy="steps",
             save_steps=eval_steps,
             # eval_accumulation_steps=10,

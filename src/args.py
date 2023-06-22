@@ -91,6 +91,7 @@ def parse_args():
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
     parser.add_argument("--lr_scheduler_type", type=str, default="linear", choices=["linear", "constant"])
+    parser.add_argument("--eval_delay", type=int, default=0)
     # parameters for kl loss
     parser.add_argument("--kl_loss_weight", type=float, default=1)
     parser.add_argument("--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp")

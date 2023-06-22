@@ -49,7 +49,7 @@ bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --s
     --gnn_epochs 100 \
     --gnn_dropout 0.4 \
     --gnn_label_smoothing 0.4 \
-    --gnn_lr 0.008 \
+    --gnn_lr 0.01 \
     --gnn_num_layers 2 \
     --gnn_weight_decay 4e-6 \
     --use_bert_x \

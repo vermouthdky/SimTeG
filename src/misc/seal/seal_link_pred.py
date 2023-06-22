@@ -4,6 +4,7 @@
 
 import argparse
 import copy as cp
+import logging
 import os
 import os.path as osp
 import pdb
@@ -26,14 +27,19 @@ from torch_geometric.utils import to_networkx, to_undirected
 from torch_sparse import coalesce
 from tqdm import tqdm
 
+from ...dataset.ogbl_citation2 import OgblCitation2WithText
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from scipy.sparse import SparseEfficiencyWarning
 
 warnings.simplefilter("ignore", SparseEfficiencyWarning)
 
+from ...utils import set_logging
 from .models import *
 from .utils import *
+
+logger = logging.getLogger(__name__)
 
 
 class SEALDataset(InMemoryDataset):
@@ -204,11 +210,11 @@ class SEALDynamicDataset(Dataset):
         return data
 
 
-def train():
+def train(epoch):
     model.train()
 
     total_loss = 0
-    pbar = tqdm(train_loader, ncols=70)
+    pbar = tqdm(train_loader, ncols=70, desc=f"Training Epoch {epoch}")
     for data in pbar:
         data = data.to(device)
         optimizer.zero_grad()
@@ -229,7 +235,7 @@ def test():
     model.eval()
 
     y_pred, y_true = [], []
-    for data in tqdm(val_loader, ncols=70):
+    for data in tqdm(val_loader, ncols=70, desc="Validation"):
         data = data.to(device)
         x = data.x if args.use_feature else None
         edge_weight = data.edge_weight if args.use_edge_weight else None
@@ -239,10 +245,10 @@ def test():
         y_true.append(data.y.view(-1).cpu().to(torch.float))
     val_pred, val_true = torch.cat(y_pred), torch.cat(y_true)
     pos_val_pred = val_pred[val_true == 1]
-    neg_val_pred = val_pred[val_true == 0]
+    neg_val_pred = val_pred[val_true == 0].view(pos_val_pred.size(0), -1)
 
     y_pred, y_true = [], []
-    for data in tqdm(test_loader, ncols=70):
+    for data in tqdm(test_loader, ncols=70, desc="Test"):
         data = data.to(device)
         x = data.x if args.use_feature else None
         edge_weight = data.edge_weight if args.use_edge_weight else None
@@ -252,16 +258,18 @@ def test():
         y_true.append(data.y.view(-1).cpu().to(torch.float))
     test_pred, test_true = torch.cat(y_pred), torch.cat(y_true)
     pos_test_pred = test_pred[test_true == 1]
-    neg_test_pred = test_pred[test_true == 0]
+    neg_test_pred = test_pred[test_true == 0].view(pos_test_pred.size(0), -1)
 
-    if args.eval_metric == "hits":
-        results = evaluate_hits(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
-    elif args.eval_metric == "mrr":
-        results = evaluate_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
-    elif args.eval_metric == "rocauc":
-        results = evaluate_ogb_rocauc(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
-    elif args.eval_metric == "auc":
-        results = evaluate_auc(val_pred, val_true, test_pred, test_true)
+    # if args.eval_metric == "hits":
+    #     results = evaluate_hits(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
+    # elif args.eval_metric == "mrr":
+    #     results = evaluate_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
+    # elif args.eval_metric == "rocauc":
+    #     results = evaluate_ogb_rocauc(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
+    # elif args.eval_metric == "auc":
+    #     results = evaluate_auc(val_pred, val_true, test_pred, test_true)
+    # elif args.eval_metric == "mrr_and_hits":
+    results = evaluate_hits_and_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
 
     return results
 
@@ -317,20 +325,28 @@ def test_multiple_models(models):
 
 def evaluate_hits(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred):
     results = {}
-    for K in [20, 50, 100]:
+    for K in [1, 3, 10]:
         evaluator.K = K
-        valid_hits = evaluator.eval(
-            {
-                "y_pred_pos": pos_val_pred,
-                "y_pred_neg": neg_val_pred,
-            }
-        )[f"hits@{K}"]
-        test_hits = evaluator.eval(
-            {
-                "y_pred_pos": pos_test_pred,
-                "y_pred_neg": neg_test_pred,
-            }
-        )[f"hits@{K}"]
+        valid_hits = (
+            evaluator.eval(
+                {
+                    "y_pred_pos": pos_val_pred,
+                    "y_pred_neg": neg_val_pred,
+                }
+            )[f"hits@{K}_list"]
+            .mean()
+            .item()
+        )
+        test_hits = (
+            evaluator.eval(
+                {
+                    "y_pred_pos": pos_test_pred,
+                    "y_pred_neg": neg_test_pred,
+                }
+            )[f"hits@{K}_list"]
+            .mean()
+            .item()
+        )
 
         results[f"Hits@{K}"] = (valid_hits, test_hits)
 
@@ -367,6 +383,13 @@ def evaluate_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred):
     return results
 
 
+def evaluate_hits_and_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred):
+    hits_results = evaluate_hits(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
+    mrr_results = evaluate_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
+    hits_results.update(mrr_results)
+    return hits_results
+
+
 def evaluate_auc(val_pred, val_true, test_pred, test_true):
     valid_auc = roc_auc_score(val_true, val_pred)
     test_auc = roc_auc_score(test_true, test_pred)
@@ -396,9 +419,11 @@ def evaluate_ogb_rocauc(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred
     return results
 
 
+set_logging()
 # Data settings
 parser = argparse.ArgumentParser(description="OGBL (SEAL)")
 parser.add_argument("--dataset", type=str, default="ogbl-collab")
+parser.add_argument("--single_gpu", type=int, default=0)
 parser.add_argument(
     "--fast_split", action="store_true", help="for large custom datasets (not OGB), do a fast data split"
 )
@@ -425,7 +450,7 @@ parser.add_argument("--test_percent", type=float, default=100)
 parser.add_argument("--dynamic_train", action="store_true", help="dynamically extract enclosing subgraphs on the fly")
 parser.add_argument("--dynamic_val", action="store_true")
 parser.add_argument("--dynamic_test", action="store_true")
-parser.add_argument("--num_workers", type=int, default=16, help="number of workers for dynamic mode; 0 if not dynamic")
+parser.add_argument("--num_workers", type=int, default=8, help="number of workers for dynamic mode; 0 if not dynamic")
 parser.add_argument(
     "--train_node_embedding", action="store_true", help="also train free-parameter node embeddings together with GNN"
 )
@@ -450,6 +475,11 @@ parser.add_argument("--test_multiple_models", action="store_true", help="test mu
 parser.add_argument("--use_heuristic", type=str, default=None, help="test a link prediction heuristic (CN or AA)")
 parser.add_argument("--suffix", type=str)
 parser.add_argument("--model_type", type=str, default="SEAL")
+parser.add_argument("--output_dir", type=str)
+parser.add_argument("--ckpt_dir", type=str)
+parser.add_argument("--use_bert_x", action="store_true")
+parser.add_argument("--bert_x_dir", type=str)
+parser.add_argument("--debug", action="store_true")
 args = parser.parse_args()
 
 if args.save_appendix == "":
@@ -463,51 +493,66 @@ if args.data_appendix == "":
     if args.use_valedges_as_input:
         args.data_appendix += "_uvai"
 
-args.res_dir = os.path.join("results/{}{}".format(args.dataset, args.save_appendix))
-print("Results will be saved in " + args.res_dir)
-if not os.path.exists(args.res_dir):
-    os.makedirs(args.res_dir)
-if not args.keep_old:
-    # Backup python files.
-    copy("seal_link_pred.py", args.res_dir)
-    copy("utils.py", args.res_dir)
-log_file = os.path.join(args.res_dir, "log.txt")
+# args.output_dir = os.path.join("results/{}{}".format(args.dataset, args.save_appendix))
+logger.info("Results will be saved in " + args.output_dir)
+# if not os.path.exists(args.output_dir):
+#     os.makedirs(args.output_dir)
+# if not args.keep_old:
+#     # Backup python files.
+#     copy("seal_link_pred.py", args.output_dir)
+#     copy("utils.py", args.output_dir)
+log_file = os.path.join(args.output_dir, "log.txt")
 # Save command line input.
 cmd_input = "python " + " ".join(sys.argv) + "\n"
-with open(os.path.join(args.res_dir, "cmd_input.txt"), "a") as f:
+with open(os.path.join(args.output_dir, "cmd_input.txt"), "a") as f:
     f.write(cmd_input)
-print("Command line input: " + cmd_input + " is saved.")
-with open(log_file, "a") as f:
-    f.write("\n" + cmd_input)
+logger.info("Command line input: " + cmd_input + " is saved.")
+# with open(log_file, "a") as f:
+#     f.write("\n" + cmd_input)
 
-if args.dataset.startswith("ogbl"):
-    dataset = PygLinkPropPredDataset(name=args.dataset)
-    split_edge = dataset.get_edge_split()
-    data = dataset[0]
-    if args.dataset.startswith("ogbl-vessel"):
-        # normalize node features
-        data.x[:, 0] = torch.nn.functional.normalize(data.x[:, 0], dim=0)
-        data.x[:, 1] = torch.nn.functional.normalize(data.x[:, 1], dim=0)
-        data.x[:, 2] = torch.nn.functional.normalize(data.x[:, 2], dim=0)
-else:
-    path = osp.join("dataset", args.dataset)
-    dataset = Planetoid(path, args.dataset)
-    split_edge = do_edge_split(dataset, args.fast_split)
-    data = dataset[0]
-    data.edge_index = split_edge["train"]["edge"].t()
+# if args.dataset.startswith("ogbl"):
+#     dataset = PygLinkPropPredDataset(name=args.dataset)
+#     split_edge = dataset.get_edge_split()
+#     data = dataset[0]
+#     if args.dataset.startswith("ogbl-vessel"):
+#         # normalize node features
+#         data.x[:, 0] = torch.nn.functional.normalize(data.x[:, 0], dim=0)
+#         data.x[:, 1] = torch.nn.functional.normalize(data.x[:, 1], dim=0)
+#         data.x[:, 2] = torch.nn.functional.normalize(data.x[:, 2], dim=0)
+# else:
+#     path = osp.join("dataset", args.dataset)
+#     dataset = Planetoid(path, args.dataset)
+#     split_edge = do_edge_split(dataset, args.fast_split)
+#     data = dataset[0]
+#     data.edge_index = split_edge["train"]["edge"].t()
 
-if args.dataset.startswith("ogbl-citation"):
-    args.eval_metric = "mrr"
-    directed = True
-elif args.dataset.startswith("ogbl-vessel"):
-    args.eval_metric = "rocauc"
-    directed = False
-elif args.dataset.startswith("ogbl"):
-    args.eval_metric = "hits"
-    directed = False
-else:  # assume other datasets are undirected
-    args.eval_metric = "auc"
-    directed = False
+dataset = OgblCitation2WithText(root="../data", tokenize=False)
+split_edge = dataset.get_edge_split()
+data = dataset.data
+if args.use_bert_x:
+    # saved_dir = os.path.join(args.data_folder, dataset2foldername(args.dataset), "processed", "bert_x.pt")
+    bert_x = torch.load(args.bert_x_dir)
+    assert bert_x.size(0) == data.x.size(0)
+    logger.info(f"using bert x loaded from {args.bert_x_dir}")
+    data.x = bert_x.to(torch.float)
+
+if args.debug:
+    all_idx = torch.arange(0, 3000)
+    data = data.subgraph(all_idx)
+    split_edge["train"] = {"source_node": all_idx[:1000], "target_node": all_idx[1000:2000]}
+    split_edge["valid"] = {
+        "source_node": all_idx[1000:2000],
+        "target_node": all_idx[2000:3000],
+        "target_node_neg": torch.randint(0, 3000, (1000, 500)),
+    }
+    split_edge["test"] = {
+        "source_node": all_idx[2000:3000],
+        "target_node": all_idx[:1000],
+        "target_node_neg": torch.randint(0, 3000, (1000, 500)),
+    }
+
+args.eval_metric = "mrr_and_hits"
+directed = True
 
 if args.use_valedges_as_input:
     val_edge_index = split_edge["valid"]["edge"].t()
@@ -522,25 +567,24 @@ if args.dataset.startswith("ogbl"):
     evaluator = Evaluator(name=args.dataset)
 if args.eval_metric == "hits":
     loggers = {
-        "Hits@20": Logger(args.runs, args),
-        "Hits@50": Logger(args.runs, args),
-        "Hits@100": Logger(args.runs, args),
+        "Hits@1": Logger(logger, args.runs, args),
+        "Hits@3": Logger(logger, args.runs, args),
+        "Hits@10": Logger(logger, args.runs, args),
     }
 elif args.eval_metric == "mrr":
     loggers = {
-        "MRR": Logger(args.runs, args),
-    }
-elif args.eval_metric == "rocauc":
-    loggers = {
-        "rocauc": Logger(args.runs, args),
+        "MRR": Logger(logger, args.runs, args),
     }
 
-elif args.eval_metric == "auc":
+elif args.eval_metric == "mrr_and_hits":
     loggers = {
-        "AUC": Logger(args.runs, args),
+        "MRR": Logger(logger, args.runs, args),
+        "Hits@1": Logger(logger, args.runs, args),
+        "Hits@3": Logger(logger, args.runs, args),
+        "Hits@10": Logger(logger, args.runs, args),
     }
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(args.single_gpu if torch.cuda.is_available() else "cpu")
 
 if args.use_heuristic:
     # Test link prediction heuristics.
@@ -565,6 +609,8 @@ if args.use_heuristic:
         results = evaluate_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
     elif args.eval_metric == "rocauc":
         results = evaluate_ogb_rocauc(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
+    elif args.eval_metric == "mrr_and_hits":
+        results = evaluate_hits_and_mrr(pos_val_pred, neg_val_pred, pos_test_pred, neg_test_pred)
     elif args.eval_metric == "auc":
         val_pred = torch.cat([pos_val_pred, neg_val_pred])
         val_true = torch.cat(
@@ -579,11 +625,11 @@ if args.use_heuristic:
     for key, result in results.items():
         loggers[key].add_result(0, result)
     for key in loggers.keys():
-        print(key)
+        logger.info(key)
         loggers[key].print_statistics()
-        with open(log_file, "a") as f:
-            print(key, file=f)
-            loggers[key].print_statistics(f=f)
+        # with open(log_file, "a") as f:
+        #     logger.info(key, file=f)
+        #     loggers[key].logger.info_statistics(f=f)
     pdb.set_trace()
     exit()
 
@@ -703,22 +749,24 @@ for run in range(args.runs):
         parameters += list(emb.parameters())
     optimizer = torch.optim.Adam(params=parameters, lr=args.lr)
     total_params = sum(p.numel() for param in parameters for p in param)
-    print(f"Total number of parameters is {total_params}")
+    logger.info(f"Total number of parameters is {total_params}")
     if args.model == "DGCNN":
-        print(f"SortPooling k is set to {model.k}")
-    with open(log_file, "a") as f:
-        print(f"Total number of parameters is {total_params}", file=f)
-        if args.model == "DGCNN":
-            print(f"SortPooling k is set to {model.k}", file=f)
+        logger.info(f"SortPooling k is set to {model.k}")
+    # with open(log_file, "a") as f:
+    # logger.info(f"Total number of parameters is {total_params}", file=f)
+    # if args.model == "DGCNN":
+    #     logger.info(f"SortPooling k is set to {model.k}", file=f)
 
     start_epoch = 1
     if args.continue_from is not None:
         model.load_state_dict(
-            torch.load(os.path.join(args.res_dir, "run{}_model_checkpoint{}.pth".format(run + 1, args.continue_from)))
+            torch.load(
+                os.path.join(args.output_dir, "run{}_model_checkpoint{}.pth".format(run + 1, args.continue_from))
+            )
         )
         optimizer.load_state_dict(
             torch.load(
-                os.path.join(args.res_dir, "run{}_optimizer_checkpoint{}.pth".format(run + 1, args.continue_from))
+                os.path.join(args.output_dir, "run{}_optimizer_checkpoint{}.pth".format(run + 1, args.continue_from))
             )
         )
         start_epoch = args.continue_from + 1
@@ -730,8 +778,8 @@ for run in range(args.runs):
             loggers[key].add_result(run, result)
         for key, result in results.items():
             valid_res, test_res = result
-            print(key)
-            print(f"Run: {run + 1:02d}, " f"Valid: {100 * valid_res:.2f}%, " f"Test: {100 * test_res:.2f}%")
+            logger.info(key)
+            logger.info(f"Run: {run + 1:02d}, " f"Valid: {100 * valid_res:.2f}%, " f"Test: {100 * test_res:.2f}%")
         pdb.set_trace()
         exit()
 
@@ -744,26 +792,26 @@ for run in range(args.runs):
             models.append(m)
         Results = test_multiple_models(models)
         for i, path in enumerate(model_paths):
-            print(path)
-            with open(log_file, "a") as f:
-                print(path, file=f)
+            logger.info(path)
+            # with open(log_file, "a") as f:
+            #     logger.info(path, file=f)
             results = Results[i]
             for key, result in results.items():
                 loggers[key].add_result(run, result)
             for key, result in results.items():
                 valid_res, test_res = result
                 to_print = f"Run: {run + 1:02d}, " + f"Valid: {100 * valid_res:.2f}%, " + f"Test: {100 * test_res:.2f}%"
-                print(key)
-                print(to_print)
-                with open(log_file, "a") as f:
-                    print(key, file=f)
-                    print(to_print, file=f)
+                logger.info(key)
+                logger.info(to_print)
+                # with open(log_file, "a") as f:
+                #     logger.info(key, file=f)
+                #     logger.info(to_print, file=f)
         pdb.set_trace()
         exit()
 
     # Training starts
     for epoch in range(start_epoch, start_epoch + args.epochs):
-        loss = train()
+        loss = train(epoch)
 
         if epoch % args.eval_steps == 0:
             results = test()
@@ -771,8 +819,10 @@ for run in range(args.runs):
                 loggers[key].add_result(run, result)
 
             if epoch % args.log_steps == 0:
-                model_name = os.path.join(args.res_dir, "run{}_model_checkpoint{}.pth".format(run + 1, epoch))
-                optimizer_name = os.path.join(args.res_dir, "run{}_optimizer_checkpoint{}.pth".format(run + 1, epoch))
+                model_name = os.path.join(args.output_dir, "run{}_model_checkpoint{}.pth".format(run + 1, epoch))
+                optimizer_name = os.path.join(
+                    args.output_dir, "run{}_optimizer_checkpoint{}.pth".format(run + 1, epoch)
+                )
                 torch.save(model.state_dict(), model_name)
                 torch.save(optimizer.state_dict(), optimizer_name)
 
@@ -780,27 +830,27 @@ for run in range(args.runs):
                     valid_res, test_res = result
                     to_print = (
                         f"Run: {run + 1:02d}, Epoch: {epoch:02d}, "
-                        + f"Loss: {loss:.4f}, Valid: {100 * valid_res:.2f}%, "
-                        + f"Test: {100 * test_res:.2f}%"
+                        + f"Loss: {loss:.4f}, Valid {key}: {100 * valid_res:.2f}%, "
+                        + f"Test {key}: {100 * test_res:.2f}%"
                     )
-                    print(key)
-                    print(to_print)
-                    with open(log_file, "a") as f:
-                        print(key, file=f)
-                        print(to_print, file=f)
+                    logger.info(key)
+                    logger.info(to_print)
+                    # with open(log_file, "a") as f:
+                    #     logger.info(key, file=f)
+                    #     logger.info(to_print, file=f)
 
     for key in loggers.keys():
-        print(key)
+        logger.info(key)
         loggers[key].print_statistics(run)
-        with open(log_file, "a") as f:
-            print(key, file=f)
-            loggers[key].print_statistics(run, f=f)
+        # with open(log_file, "a") as f:
+        #     logger.info(key, file=f)
+        #     loggers[key].logger.info_statistics(run, f=f)
 
 for key in loggers.keys():
-    print(key)
+    logger.info(key)
     loggers[key].print_statistics()
-    with open(log_file, "a") as f:
-        print(key, file=f)
-        loggers[key].print_statistics(f=f)
-print(f"Total number of parameters is {total_params}")
-print(f"Results are saved in {args.res_dir}")
+    # with open(log_file, "a") as f:
+    #     logger.info(key, file=f)
+    #     loggers[key].logger.info_statistics(f=f)
+logger.info(f"Total number of parameters is {total_params}")
+logger.info(f"Results are saved in {args.output_dir}")

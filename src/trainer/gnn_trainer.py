@@ -1,4 +1,5 @@
 import gc
+import json
 import logging
 import os
 import os.path as osp
@@ -222,7 +223,9 @@ class GNNSamplingTrainer:  # single gpu
             loss.backward()
             self.optimizer.step()
 
-            total_loss += float(loss)
+            loss_without_smoothing = F.cross_entropy(out, y)
+
+            total_loss += float(loss_without_smoothing)
             total_correct += int(out.argmax(dim=-1).eq(y).sum())
 
         loss = total_loss / len(self.train_loader)
@@ -269,7 +272,7 @@ class GNNSamplingTrainer:  # single gpu
         for epoch in range(1, self.args.gnn_epochs + 1):
             loss, acc = self.training_step(epoch)
             logger.info(f"Epoch {epoch:02d}, Loss: {loss:.4f}, Train Acc: {acc:.4f}")
-            if epoch >= 10 and epoch % 5 == 0:
+            if epoch >= self.args.gnn_eval_warmup and epoch % self.args.gnn_eval_interval == 0:
                 train_acc, val_acc, test_acc = self.eval()
                 logger.info(f"Epoch: {epoch:02d} Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}")
                 if val_acc > best_val_acc:
@@ -371,7 +374,7 @@ class MLPTrainer:
         for epoch in range(1, self.args.gnn_epochs + 1):
             loss, acc = self.training_step(epoch)
             logger.info(f"Epoch {epoch:02d}, Loss: {loss:.4f}, Train Acc: {acc:.4f}")
-            if epoch > 3:
+            if epoch > 0:
                 train_acc, val_acc, test_acc = self.eval()
                 logger.info(f"Epoch: {epoch:02d} Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}")
                 if val_acc > best_val_acc:

@@ -2,25 +2,28 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import sys
 import math
-from tqdm import tqdm
+import pdb
 import random
+import sys
+
 import numpy as np
 import scipy.sparse as ssp
-from scipy.sparse.csgraph import shortest_path
 import torch
-from torch_sparse import spspmm
 import torch_geometric
-from torch_geometric.data import DataLoader
-from torch_geometric.data import Data
-from torch_geometric.utils import (negative_sampling, add_self_loops,
-                                   train_test_split_edges)
-import pdb
+from scipy.sparse.csgraph import shortest_path
+from torch_geometric.data import Data, DataLoader
+from torch_geometric.utils import (
+    add_self_loops,
+    negative_sampling,
+    train_test_split_edges,
+)
+from torch_sparse import spspmm
+from tqdm import tqdm
 
 
 def neighbors(fringe, A, outgoing=True):
-    # Find all 1-hop neighbors of nodes in fringe from graph A, 
+    # Find all 1-hop neighbors of nodes in fringe from graph A,
     # where A is a scipy csr adjacency matrix.
     # If outgoing=True, find neighbors with outgoing edges;
     # otherwise, find neighbors with incoming edges (you should
@@ -33,15 +36,15 @@ def neighbors(fringe, A, outgoing=True):
     return res
 
 
-def k_hop_subgraph(src, dst, num_hops, A, sample_ratio=1.0, 
-                   max_nodes_per_hop=None, node_features=None, 
-                   y=1, directed=False, A_csc=None):
-    # Extract the k-hop enclosing subgraph around link (src, dst) from A. 
+def k_hop_subgraph(
+    src, dst, num_hops, A, sample_ratio=1.0, max_nodes_per_hop=None, node_features=None, y=1, directed=False, A_csc=None
+):
+    # Extract the k-hop enclosing subgraph around link (src, dst) from A.
     nodes = [src, dst]
     dists = [0, 0]
     visited = set([src, dst])
     fringe = set([src, dst])
-    for dist in range(1, num_hops+1):
+    for dist in range(1, num_hops + 1):
         if not directed:
             fringe = neighbors(fringe, A)
         else:
@@ -51,7 +54,7 @@ def k_hop_subgraph(src, dst, num_hops, A, sample_ratio=1.0,
         fringe = fringe - visited
         visited = visited.union(fringe)
         if sample_ratio < 1.0:
-            fringe = random.sample(fringe, int(sample_ratio*len(fringe)))
+            fringe = random.sample(fringe, int(sample_ratio * len(fringe)))
         if max_nodes_per_hop is not None:
             if max_nodes_per_hop < len(fringe):
                 fringe = random.sample(fringe, max_nodes_per_hop)
@@ -85,7 +88,7 @@ def drnl_node_labeling(adj, src, dst):
     dist2src = np.insert(dist2src, dst, 0, axis=0)
     dist2src = torch.from_numpy(dist2src)
 
-    dist2dst = shortest_path(adj_wo_src, directed=False, unweighted=True, indices=dst-1)
+    dist2dst = shortest_path(adj_wo_src, directed=False, unweighted=True, indices=dst - 1)
     dist2dst = np.insert(dist2dst, src, 0, axis=0)
     dist2dst = torch.from_numpy(dist2dst)
 
@@ -94,15 +97,15 @@ def drnl_node_labeling(adj, src, dst):
 
     z = 1 + torch.min(dist2src, dist2dst)
     z += dist_over_2 * (dist_over_2 + dist_mod_2 - 1)
-    z[src] = 1.
-    z[dst] = 1.
-    z[torch.isnan(z)] = 0.
+    z[src] = 1.0
+    z[dst] = 1.0
+    z[torch.isnan(z)] = 0.0
 
     return z.to(torch.long)
 
 
 def de_node_labeling(adj, src, dst, max_dist=3):
-    # Distance Encoding. See "Li et. al., Distance Encoding: Design Provably More 
+    # Distance Encoding. See "Li et. al., Distance Encoding: Design Provably More
     # Powerful Neural Networks for Graph Representation Learning."
     src, dst = (dst, src) if src > dst else (src, dst)
 
@@ -130,7 +133,7 @@ def de_plus_node_labeling(adj, src, dst, max_dist=100):
     dist2src = np.insert(dist2src, dst, 0, axis=0)
     dist2src = torch.from_numpy(dist2src)
 
-    dist2dst = shortest_path(adj_wo_src, directed=False, unweighted=True, indices=dst-1)
+    dist2dst = shortest_path(adj_wo_src, directed=False, unweighted=True, indices=dst - 1)
     dist2dst = np.insert(dist2dst, src, 0, axis=0)
     dist2dst = torch.from_numpy(dist2dst)
 
@@ -141,46 +144,63 @@ def de_plus_node_labeling(adj, src, dst, max_dist=100):
     return dist.to(torch.long)
 
 
-def construct_pyg_graph(node_ids, adj, dists, node_features, y, node_label='drnl'):
+def construct_pyg_graph(node_ids, adj, dists, node_features, y, node_label="drnl"):
     # Construct a pytorch_geometric graph from a scipy csr adjacency matrix.
     u, v, r = ssp.find(adj)
     num_nodes = adj.shape[0]
-    
+
     node_ids = torch.LongTensor(node_ids)
     u, v = torch.LongTensor(u), torch.LongTensor(v)
     r = torch.LongTensor(r)
     edge_index = torch.stack([u, v], 0)
     edge_weight = r.to(torch.float)
     y = torch.tensor([y])
-    if node_label == 'drnl':  # DRNL
+    if node_label == "drnl":  # DRNL
         z = drnl_node_labeling(adj, 0, 1)
-    elif node_label == 'hop':  # mininum distance to src and dst
+    elif node_label == "hop":  # mininum distance to src and dst
         z = torch.tensor(dists)
-    elif node_label == 'zo':  # zero-one labeling trick
-        z = (torch.tensor(dists)==0).to(torch.long)
-    elif node_label == 'de':  # distance encoding
+    elif node_label == "zo":  # zero-one labeling trick
+        z = (torch.tensor(dists) == 0).to(torch.long)
+    elif node_label == "de":  # distance encoding
         z = de_node_labeling(adj, 0, 1)
-    elif node_label == 'de+':
+    elif node_label == "de+":
         z = de_plus_node_labeling(adj, 0, 1)
-    elif node_label == 'degree':  # this is technically not a valid labeling trick
+    elif node_label == "degree":  # this is technically not a valid labeling trick
         z = torch.tensor(adj.sum(axis=0)).squeeze(0)
-        z[z>100] = 100  # limit the maximum label to 100
+        z[z > 100] = 100  # limit the maximum label to 100
     else:
         z = torch.zeros(len(dists), dtype=torch.long)
-    data = Data(node_features, edge_index, edge_weight=edge_weight, y=y, z=z, 
-                node_id=node_ids, num_nodes=num_nodes)
+    data = Data(node_features, edge_index, edge_weight=edge_weight, y=y, z=z, node_id=node_ids, num_nodes=num_nodes)
     return data
 
- 
-def extract_enclosing_subgraphs(link_index, A, x, y, num_hops, node_label='drnl', 
-                                ratio_per_hop=1.0, max_nodes_per_hop=None, 
-                                directed=False, A_csc=None):
+
+def extract_enclosing_subgraphs(
+    link_index,
+    A,
+    x,
+    y,
+    num_hops,
+    node_label="drnl",
+    ratio_per_hop=1.0,
+    max_nodes_per_hop=None,
+    directed=False,
+    A_csc=None,
+):
     # Extract enclosing subgraphs from A for all links in link_index.
     data_list = []
     for src, dst in tqdm(link_index.t().tolist()):
-        tmp = k_hop_subgraph(src, dst, num_hops, A, ratio_per_hop, 
-                             max_nodes_per_hop, node_features=x, y=y, 
-                             directed=directed, A_csc=A_csc)
+        tmp = k_hop_subgraph(
+            src,
+            dst,
+            num_hops,
+            A,
+            ratio_per_hop,
+            max_nodes_per_hop,
+            node_features=x,
+            y=y,
+            directed=directed,
+            A_csc=A_csc,
+        )
         data = construct_pyg_graph(*tmp, node_label)
         data_list.append(data)
 
@@ -196,8 +216,8 @@ def do_edge_split(dataset, fast_split=False, val_ratio=0.05, test_ratio=0.1):
         data = train_test_split_edges(data, val_ratio, test_ratio)
         edge_index, _ = add_self_loops(data.train_pos_edge_index)
         data.train_neg_edge_index = negative_sampling(
-            edge_index, num_nodes=data.num_nodes,
-            num_neg_samples=data.train_pos_edge_index.size(1))
+            edge_index, num_nodes=data.num_nodes, num_neg_samples=data.train_pos_edge_index.size(1)
+        )
     else:
         num_nodes = data.num_nodes
         row, col = data.edge_index
@@ -211,73 +231,67 @@ def do_edge_split(dataset, fast_split=False, val_ratio=0.05, test_ratio=0.1):
         row, col = row[perm], col[perm]
         r, c = row[:n_v], col[:n_v]
         data.val_pos_edge_index = torch.stack([r, c], dim=0)
-        r, c = row[n_v:n_v + n_t], col[n_v:n_v + n_t]
+        r, c = row[n_v : n_v + n_t], col[n_v : n_v + n_t]
         data.test_pos_edge_index = torch.stack([r, c], dim=0)
-        r, c = row[n_v + n_t:], col[n_v + n_t:]
+        r, c = row[n_v + n_t :], col[n_v + n_t :]
         data.train_pos_edge_index = torch.stack([r, c], dim=0)
         # Negative edges (cannot guarantee (i,j) and (j,i) won't both appear)
-        neg_edge_index = negative_sampling(
-            data.edge_index, num_nodes=num_nodes,
-            num_neg_samples=row.size(0))
+        neg_edge_index = negative_sampling(data.edge_index, num_nodes=num_nodes, num_neg_samples=row.size(0))
         data.val_neg_edge_index = neg_edge_index[:, :n_v]
-        data.test_neg_edge_index = neg_edge_index[:, n_v:n_v + n_t]
-        data.train_neg_edge_index = neg_edge_index[:, n_v + n_t:]
+        data.test_neg_edge_index = neg_edge_index[:, n_v : n_v + n_t]
+        data.train_neg_edge_index = neg_edge_index[:, n_v + n_t :]
 
-    split_edge = {'train': {}, 'valid': {}, 'test': {}}
-    split_edge['train']['edge'] = data.train_pos_edge_index.t()
-    split_edge['train']['edge_neg'] = data.train_neg_edge_index.t()
-    split_edge['valid']['edge'] = data.val_pos_edge_index.t()
-    split_edge['valid']['edge_neg'] = data.val_neg_edge_index.t()
-    split_edge['test']['edge'] = data.test_pos_edge_index.t()
-    split_edge['test']['edge_neg'] = data.test_neg_edge_index.t()
+    split_edge = {"train": {}, "valid": {}, "test": {}}
+    split_edge["train"]["edge"] = data.train_pos_edge_index.t()
+    split_edge["train"]["edge_neg"] = data.train_neg_edge_index.t()
+    split_edge["valid"]["edge"] = data.val_pos_edge_index.t()
+    split_edge["valid"]["edge_neg"] = data.val_neg_edge_index.t()
+    split_edge["test"]["edge"] = data.test_pos_edge_index.t()
+    split_edge["test"]["edge_neg"] = data.test_neg_edge_index.t()
     return split_edge
 
 
 def get_pos_neg_edges(split, split_edge, edge_index, num_nodes, percent=100):
-    if 'edge' in split_edge['train']:
-        pos_edge = split_edge[split]['edge'].t()
+    if "edge" in split_edge["train"]:
+        pos_edge = split_edge[split]["edge"].t()
 
-        if 'edge_neg' in split_edge['train']:
+        if "edge_neg" in split_edge["train"]:
             # use presampled  negative training edges for ogbl-vessel
-            neg_edge = split_edge[split]['edge_neg'].t()
+            neg_edge = split_edge[split]["edge_neg"].t()
 
         else:
             new_edge_index, _ = add_self_loops(edge_index)
-            neg_edge = negative_sampling(
-                new_edge_index, num_nodes=num_nodes,
-                num_neg_samples=pos_edge.size(1))
+            neg_edge = negative_sampling(new_edge_index, num_nodes=num_nodes, num_neg_samples=pos_edge.size(1))
 
         # subsample for pos_edge
         np.random.seed(123)
         num_pos = pos_edge.size(1)
         perm = np.random.permutation(num_pos)
-        perm = perm[:int(percent / 100 * num_pos)]
+        perm = perm[: int(percent / 100 * num_pos)]
         pos_edge = pos_edge[:, perm]
         # subsample for neg_edge
         np.random.seed(123)
         num_neg = neg_edge.size(1)
         perm = np.random.permutation(num_neg)
-        perm = perm[:int(percent / 100 * num_neg)]
+        perm = perm[: int(percent / 100 * num_neg)]
         neg_edge = neg_edge[:, perm]
 
-    elif 'source_node' in split_edge['train']:
-        source = split_edge[split]['source_node']
-        target = split_edge[split]['target_node']
-        if split == 'train':
-            target_neg = torch.randint(0, num_nodes, [target.size(0), 1],
-                                       dtype=torch.long)
+    elif "source_node" in split_edge["train"]:
+        source = split_edge[split]["source_node"]
+        target = split_edge[split]["target_node"]
+        if split == "train":
+            target_neg = torch.randint(0, num_nodes, [target.size(0), 1], dtype=torch.long)
         else:
-            target_neg = split_edge[split]['target_node_neg']
+            target_neg = split_edge[split]["target_node_neg"]
         # subsample
         np.random.seed(123)
         num_source = source.size(0)
         perm = np.random.permutation(num_source)
-        perm = perm[:int(percent / 100 * num_source)]
+        perm = perm[: int(percent / 100 * num_source)]
         source, target, target_neg = source[perm], target[perm], target_neg[perm, :]
         pos_edge = torch.stack([source, target])
         neg_per_target = target_neg.size(1)
-        neg_edge = torch.stack([source.repeat_interleave(neg_per_target), 
-                                target_neg.view(-1)])
+        neg_edge = torch.stack([source.repeat_interleave(neg_per_target), target_neg.view(-1)])
     return pos_edge, neg_edge
 
 
@@ -312,11 +326,12 @@ def PPR(A, edge_index):
     # Need install fast_pagerank by "pip install fast-pagerank"
     # Too slow for large datasets now.
     from fast_pagerank import pagerank_power
+
     num_nodes = A.shape[0]
     src_index, sort_indices = torch.sort(edge_index[0])
     dst_index = edge_index[1, sort_indices]
     edge_index = torch.stack([src_index, dst_index])
-    #edge_index = edge_index[:, :50]
+    # edge_index = edge_index[:, :50]
     scores = []
     visited = set([])
     j = 0
@@ -343,23 +358,24 @@ def PPR(A, edge_index):
 
 
 class Logger(object):
-    def __init__(self, runs, info=None):
+    def __init__(self, logger, runs, info=None):
         self.info = info
         self.results = [[] for _ in range(runs)]
+        self.logger = logger
 
     def add_result(self, run, result):
         assert len(result) == 2
         assert run >= 0 and run < len(self.results)
         self.results[run].append(result)
 
-    def print_statistics(self, run=None, f=sys.stdout):
+    def print_statistics(self, run=None):
         if run is not None:
             result = 100 * torch.tensor(self.results[run])
             argmax = result[:, 0].argmax().item()
-            print(f'Run {run + 1:02d}:', file=f)
-            print(f'Highest Valid: {result[:, 0].max():.2f}', file=f)
-            print(f'Highest Eval Point: {argmax + 1}', file=f)
-            print(f'   Final Test: {result[argmax, 1]:.2f}', file=f)
+            self.logger.critical(f"Run {run + 1:02d}:")
+            self.logger.critical(f"Highest Valid: {result[:, 0].max():.2f}")
+            self.logger.critical(f"Highest Eval Point: {argmax + 1}")
+            self.logger.critical(f"   Final Test: {result[argmax, 1]:.2f}")
         else:
             result = 100 * torch.tensor(self.results)
 
@@ -371,9 +387,8 @@ class Logger(object):
 
             best_result = torch.tensor(best_results)
 
-            print(f'All runs:', file=f)
+            self.logger.critical(f"All runs:")
             r = best_result[:, 0]
-            print(f'Highest Valid: {r.mean():.2f} ± {r.std():.2f}', file=f)
+            self.logger.critical(f"Highest Valid: {r.mean():.2f} ± {r.std():.2f}")
             r = best_result[:, 1]
-            print(f'   Final Test: {r.mean():.2f} ± {r.std():.2f}', file=f)
-
+            self.logger.critical(f"   Final Test: {r.mean():.2f} ± {r.std():.2f}")

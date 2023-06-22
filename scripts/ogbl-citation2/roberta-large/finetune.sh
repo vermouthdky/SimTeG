@@ -1,6 +1,6 @@
 dataset=ogbl-citation2
-model_type=e5-large
-suffix=main
+model_type=all-roberta-large-v1
+suffix=finetune
 
 bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
     --pretrained_repo sentence-transformers/${model_type} \
@@ -13,6 +13,5 @@ bash scripts/train.sh --model_type $model_type --dataset $dataset --suffix $suff
     --epochs 2 \
     --warmup_ratio 0.15 \
     --lr_scheduler_type linear \
-    --use_peft \
     --deepspeed ds_config.json \
-    --fp16
+    --fp16 # --eval_delay 10 \
