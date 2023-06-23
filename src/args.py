@@ -14,6 +14,7 @@ LM_LIST = [
     "e5-large",
     "deberta-v2-xxlarge",
     "sentence-t5-large",
+    "roberta-large",
 ]
 GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN", "MLP"]
 SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
@@ -180,6 +181,7 @@ def _set_pretrained_repo(args):
         "e5-large": "intfloat/e5-large",
         "deberta-v2-xxlarge": "microsoft/deberta-v2-xxlarge",
         "sentence-t5-large": "sentence-transformers/sentence-t5-large",
+        "roberta-large": "roberta-large",
     }
 
     if args.model_type in dict.keys():
@@ -214,6 +216,7 @@ def _set_dataset_specific_args(args):
         "e5-large": 1024,
         "deberta-v2-xxlarge": 1536,
         "sentence-t5-large": 768,
+        "roberta-large": 1024,
     }
 
     if args.model_type in hidden_size_dict.keys():

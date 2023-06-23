@@ -17,6 +17,7 @@ node_cls_model_class = {
     "all-MiniLM-L6-v2": Sentence_Transformer,
     "sentence-t5-large": T5_model,
     "e5-large": E5_model,
+    "roberta-large": Roberta,
 }
 
 link_pred_model_class = {

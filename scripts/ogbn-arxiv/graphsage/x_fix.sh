@@ -29,7 +29,7 @@ bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --s
     --gnn_batch_size 10000 \
     --gnn_eval_batch_size 10000 \
     --gnn_epochs 100 \
-    --gnn_dropout 0.36 \
+    --gnn_dropout 0.4 \
     --gnn_label_smoothing 0.6 \
     --gnn_lr 0.01 \
     --gnn_num_layers 2 \

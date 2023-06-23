@@ -124,7 +124,49 @@ class Sentence_Transformer(nn.Module):
 
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        data_type = token_embeddings.dtype
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).to(data_type)
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+    def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
+        bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
+        sentence_embeddings = self.mean_pooling(bert_out, att_mask)
+        out = self.head(sentence_embeddings)
+
+        if return_hidden:
+            sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+            return out, sentence_embeddings
+        else:
+            return out
+
+
+class Roberta(nn.Module):
+    def __init__(self, args):
+        super(Roberta, self).__init__()
+        transformers_logging.set_verbosity_error()
+        config = AutoConfig.from_pretrained(args.pretrained_repo)
+        logger.warning(f"inherit model weights from {args.pretrained_repo}")
+        config.num_labels = args.num_labels
+        config.header_dropout_prob = args.header_dropout_prob
+        config.save_pretrained(save_directory=args.output_dir)
+        # init modules
+        self.bert_model = AutoModel.from_pretrained(args.pretrained_repo, config=config, add_pooling_layer=False)
+        self.head = SentenceClsHead(config)
+        if args.use_peft:
+            lora_config = LoraConfig(
+                task_type=TaskType.SEQ_CLS,
+                inference_mode=False,
+                r=args.peft_r,
+                lora_alpha=args.peft_lora_alpha,
+                lora_dropout=args.peft_lora_dropout,
+            )
+            self.bert_model = PeftModel(self.bert_model, lora_config)
+            self.bert_model.print_trainable_parameters()
+
+    def mean_pooling(self, model_output, attention_mask):
+        token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
+        data_type = token_embeddings.dtype
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).to(data_type)
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
@@ -276,29 +318,6 @@ class Deberta(nn.Module):
 
 #     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
 #         # here we set labels here to fix the bug that raise in huggingface trainer class
-#         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
-#         out = self.head(bert_out[0])
-#         if return_hidden:
-#             return out, bert_out[0][:, 0, :]
-#         else:
-#             return out
-
-
-# class Roberta(nn.Module):
-#     def __init__(self, args):
-#         super(Roberta, self).__init__()
-#         transformers_logging.set_verbosity_error()
-#         config = RobertaConfig.from_pretrained(args.pretrained_repo)
-#         config.num_labels = args.num_labels
-#         config.header_dropout_prob = args.header_dropout_prob
-#         config.hidden_dropout_prob = args.hidden_dropout_prob
-#         config.attention_probs_dropout_prob = args.attention_dropout_prob
-#         config.save_pretrained(save_directory=args.output_dir)
-#         # init modules
-#         self.bert_model = RobertaModel.from_pretrained(args.pretrained_repo, config=config, add_pooling_layer=False)
-#         self.head = RobertaClassificationHead(config)
-
-#     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
 #         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
 #         out = self.head(bert_out[0])
 #         if return_hidden:
