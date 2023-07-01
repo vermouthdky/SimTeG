@@ -15,6 +15,8 @@ LM_LIST = [
     "deberta-v2-xxlarge",
     "sentence-t5-large",
     "roberta-large",
+    "instructor-xl",
+    "e5-large-v2",
 ]
 GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN", "MLP"]
 SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
@@ -75,6 +77,7 @@ def parse_args():
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--use_giant_x", action="store_true", default=False)
     parser.add_argument("--fp16", action="store_true", default=False)
+    parser.add_argument("--bf16", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -182,6 +185,8 @@ def _set_pretrained_repo(args):
         "deberta-v2-xxlarge": "microsoft/deberta-v2-xxlarge",
         "sentence-t5-large": "sentence-transformers/sentence-t5-large",
         "roberta-large": "roberta-large",
+        "instructor-xl": "hkunlp/instructor-xl",
+        "e5-large-v2": "intfloat/e5-large-v2",
     }
 
     if args.model_type in dict.keys():
@@ -214,9 +219,11 @@ def _set_dataset_specific_args(args):
         "all-mpnet-base-v2": 768,
         "all-MiniLM-L6-v2": 384,
         "e5-large": 1024,
+        "e5-large-v2": 1024,
         "deberta-v2-xxlarge": 1536,
         "sentence-t5-large": 768,
         "roberta-large": 1024,
+        "instructor-xl": 1024,
     }
 
     if args.model_type in hidden_size_dict.keys():

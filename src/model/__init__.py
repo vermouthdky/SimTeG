@@ -15,8 +15,10 @@ node_cls_model_class = {
     "all-roberta-large-v1": Sentence_Transformer,
     "all-mpnet-base-v2": Sentence_Transformer,
     "all-MiniLM-L6-v2": Sentence_Transformer,
+    "instructor-xl": T5_model,
     "sentence-t5-large": T5_model,
     "e5-large": E5_model,
+    "e5-large-v2": E5_model,
     "roberta-large": Roberta,
 }
 
@@ -28,8 +30,11 @@ link_pred_model_class = {
     "all-roberta-large-v1": Link_Sentence_Transformer,
     "all-mpnet-base-v2": Link_Sentence_Transformer,
     "all-MiniLM-L6-v2": Link_Sentence_Transformer,
+    "instructor-xl": Sentence_Transformer,
     "sentence-t5-large": T5_model,
     "e5-large": Link_E5_model,
+    "e5-large-v2": Link_E5_model,
+    "roberta-large": Link_Roberta,
 }
 
 

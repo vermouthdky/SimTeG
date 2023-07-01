@@ -288,6 +288,7 @@ class GNNSamplingTrainer:  # single gpu
                     if self.trial.should_prune():
                         raise optuna.exceptions.TrialPruned()
         logger.info(f"best_val_acc: {best_val_acc:.4f}, final_test_acc: {final_test_acc:.4f}")
+        torch.save(self.model.state_dict(), os.path.join(self.args.ckpt_dir, "model.pt"))
         return final_test_acc, best_val_acc
 
 
@@ -390,4 +391,5 @@ class MLPTrainer:
                     if self.trial.should_prune():
                         raise optuna.exceptions.TrialPruned()
         logger.info(f"best_val_acc: {best_val_acc:.4f}, final_test_acc: {final_test_acc:.4f}")
+        torch.save(self.model.state_dict(), os.path.join(self.args.ckpt_dir, "model.pt"))
         return final_test_acc, best_val_acc

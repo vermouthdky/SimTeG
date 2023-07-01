@@ -41,14 +41,13 @@ class T5_model(nn.Module):
             self.bert_model = PeftModel(self.bert_model, lora_config)
             self.bert_model.print_trainable_parameters()
 
-    def mean_pooling(self, model_output, attention_mask):
-        token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+    def average_pool(self, last_hidden_states, attention_mask):  # for E5_model
+        last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
+        return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
 
     def forward(self, input_ids, att_mask, labels=None, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, decoder_input_ids=input_ids, attention_mask=att_mask)
-        sentence_embeddings = self.mean_pooling(bert_out, att_mask)
+        sentence_embeddings = self.average_pool(bert_out[0], att_mask)
         out = self.head(sentence_embeddings)
 
         if return_hidden:

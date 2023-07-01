@@ -22,7 +22,7 @@ from .ogb_with_text import OgbWithText
 logger = logging.getLogger(__name__)
 
 
-class OgbnArxivWithText(OgbWithText):
+class OgbnArxivWithTAPE(OgbWithText):
     def __init__(
         self,
         root="data",
@@ -31,7 +31,7 @@ class OgbnArxivWithText(OgbWithText):
         tokenizer="sentence-transformers/all-MiniLM-L6-v2",
         tokenize=True,
     ):
-        name = "ogbn-arxiv-text"  ## original name, e.g., ogbn-proteins
+        name = "ogbn-arxiv-text-tape"  ## original name, e.g., ogbn-proteins
         meta_info = {
             "download_name": "arxiv",
             "num_tasks": 1,
@@ -44,11 +44,10 @@ class OgbnArxivWithText(OgbWithText):
             "additional_edge_files": [],
             "binary": False,
             "graph_url": "http://snap.stanford.edu/ogb/data/nodeproppred/arxiv.zip",
-            "text_url": "https://snap.stanford.edu/ogb/data/misc/ogbn_arxiv/titleabs.tsv.gz",
-            "tape_text_url": "https://drive.google.com/u/0/uc?id=1A6mZSFzDIhJU795497R6mAAM2Y9qutI5&export=download",
+            "text_url": "https://drive.google.com/u/0/uc?id=1A6mZSFzDIhJU795497R6mAAM2Y9qutI5&export=download",
             "tokenizer": tokenizer,
         }
-        super(OgbnArxivWithText, self).__init__(name, meta_info, root, transform, pre_transform, tokenizer, tokenize)
+        super(OgbnArxivWithTAPE, self).__init__(name, meta_info, root, transform, pre_transform, tokenizer, tokenize)
 
     def get_idx_split(self):
         split_type = "time"
@@ -88,7 +87,15 @@ class OgbnArxivWithText(OgbWithText):
     def download(self):
         path = download_url(self.meta_info["graph_url"], self.original_root)
         extract_zip(path, self.original_root)
-        text_path = download_url(self.meta_info["text_url"], osp.join(self.original_root, "arxiv/raw"))
+
+        text_path = osp.join(self.original_root, f"{self.meta_info['download_name']}/raw/tape.zip")
+        if osp.exists(text_path) and osp.getsize(text_path) > 0:
+            print(f"Using existing file {text_path}.")
+        else:
+            gdown.download(url=self.meta_info["text_url"], output=text_path, quiet=False, fuzzy=False)
+            extract_zip(text_path, osp.join(self.root, "tape"))
+            os.remove(text_path)
+
         os.unlink(path)
         shutil.rmtree(self.root)
         shutil.move(osp.join(self.original_root, self.meta_info["download_name"]), self.root)
@@ -115,6 +122,21 @@ class OgbnArxivWithText(OgbWithText):
             data.y = torch.from_numpy(node_label).to(torch.long)
 
         data = data if self.pre_transform is None else self.pre_transform(data)
+
+        # process tape json
+        # modified from https://github.com/XiaoxinHe/TAPE/blob/main/core/data_utils/load.py
+        text_res = dict(text=[], node_id=[])
+        num_nodes = data.y.size(0)
+        for i in range(num_nodes):
+            filename = str(i) + ".json"
+            file_path = os.path.join(self.raw_dir, "tape", "ogbn-arxiv", filename)
+            with open(file_path, "r") as f:
+                json_data = json.load(f)
+                content = json_data["choices"][0]["message"]["content"]
+                text_res["text"].append(content)
+                text_res["node_id"].append(i)
+        text_res = pd.DataFrame(text_res)
+        text_res.to_csv(osp.join(self.raw_dir, "tape.csv.gz"), compression="gzip", header=None, index=False)
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
 
@@ -124,24 +146,12 @@ class OgbnArxivWithText(OgbWithText):
         2. Tokenize title and abstract
         3. save the flag of tokenizer
         """
-        df = pd.read_csv(
-            osp.join(self.raw_dir, "titleabs.tsv.gz"),
-            sep="\t",
-            names=["paper id", "title", "abstract"],
-            header=None
-            # dtype={"paper id": np.int64, "title": str, "abstract": str},
-        ).dropna()
-        # Unzip the file `titleabs.tsv.gz` with gzip, otherwise it encounters the following bug if directly applying read csv
-        # BUG: the first column's id is inplaced with 'titleabs.tsv'. Try to fix it manually
-        df.iloc[0][0] = 200971
-        df_mapping = pd.read_csv(osp.join(self.root, "mapping/nodeidx2paperid.csv.gz"))
-        df["abstitle"] = "title: " + df["title"] + "; " + "abstract: " + df["abstract"]
-        df = df.drop(columns=["title", "abstract"])
-        df = df.astype({"paper id": np.int64, "abstitle": str})
-        df = df_mapping.merge(df, how="inner", on="paper id")
+        df = pd.read_csv(osp.join(self.raw_dir, "tape.csv.gz"))
+        df.sort_values(by="node_id", inplace=True)
+        df["explanation"] = "Addtional explanation of the paper: " + df["text"]
         logger.info("tokenizing...")
         text_encoding = self.tokenizer(
-            df["abstitle"].values.tolist(),
+            df["explanation"].values.tolist(),
             padding=True,
             truncation=True,
             return_tensors="pt",
@@ -151,7 +161,7 @@ class OgbnArxivWithText(OgbWithText):
 
 if __name__ == "__main__":
     set_logging()
-    pyg_dataset = OgbnArxivWithText("../data")
+    pyg_dataset = OgbnArxivWithTAPE("../data")
     print(pyg_dataset[0])
     split_index = pyg_dataset.get_idx_split()
     print(split_index)

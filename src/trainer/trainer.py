@@ -170,4 +170,5 @@ class Trainer(ABC):
         _, _, results = self.inference_and_evaluate(self.all_set)
         gc.collect()
         torch.cuda.empty_cache()
+        torch.save(self.model.state_dict(), self.ckpt_path)
         return results["test_acc"], results["valid_acc"]

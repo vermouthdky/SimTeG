@@ -47,7 +47,7 @@ class HP_search(ABC):
         del trainer, data, split_idx, evaluator
         torch.cuda.empty_cache()
         gc.collect()
-        return test_acc
+        return valid_acc
 
     @abstractmethod
     def setup_search_space(self, args, trial):

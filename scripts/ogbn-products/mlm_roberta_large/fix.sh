@@ -1,4 +1,4 @@
-dataset=ogbn-arxiv
+dataset=ogbn-products
 model_type=roberta-large
 suffix=fix
 

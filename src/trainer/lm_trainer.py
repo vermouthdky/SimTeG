@@ -103,6 +103,7 @@ class LMTrainer(Trainer):
             ddp_find_unused_parameters=False,
             deepspeed=self.args.deepspeed,
             fp16=self.args.fp16,
+            bf16=self.args.bf16,
         )
         return InnerTrainer(
             model=self.model,

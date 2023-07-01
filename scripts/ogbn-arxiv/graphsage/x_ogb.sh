@@ -4,7 +4,7 @@ model_type=GraphSAGE
 lm_model_type=all-MiniLM-L6-v2
 suffix=main_X_ogb
 bash scripts/single_gpu_train.sh --model_type $model_type --dataset $dataset --suffix $suffix \
-    --n_exps 10 \
+    --n_exps 1 \
     --single_gpu 0 \
     --lm_type $lm_model_type \
     --gnn_batch_size 10000 \
