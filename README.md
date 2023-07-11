@@ -1,4 +1,4 @@
-# SimTG
+# SimTG: A Frustratingly Simple Approach For Textual Graph Representation Learning
 ![feature space](./misc/feature_space.png)
 This is the official repository of SimTG. Prepreint will be release soon.
 ## Environment
