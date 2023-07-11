@@ -4,6 +4,7 @@ import os
 import os.path as osp
 import shutil
 
+import gdown
 import numpy as np
 import pandas as pd
 import torch
@@ -12,26 +13,29 @@ from ogb.io.read_graph_pyg import read_graph_pyg, read_heterograph_pyg
 from ogb.utils.torch_util import replace_numpy_with_torchtensor
 from ogb.utils.url import decide_download, download_url, extract_zip
 from torch_geometric.data import InMemoryDataset
+from torch_geometric.utils.mask import index_to_mask
+from torch_geometric.utils.num_nodes import maybe_num_nodes
+from tqdm import tqdm
 from transformers import AutoTokenizer
+
+from ..utils import dist_barrier_context, set_logging
+from .ogb_with_text import OgbWithText
 
 logger = logging.getLogger(__name__)
 
 
-class OgblCitation2WithText(InMemoryDataset):
+class OgblCitation2WithText(OgbWithText):
     def __init__(
         self,
         root="data",
         transform=None,
         pre_transform=None,
-        tokenizer="microsoft/deberta-base",
+        tokenizer="sentence-transformers/all-MiniLM-L6-v2",
         tokenize=True,
     ):
-        self.name = "ogbl-citation2"  ## original name, e.g., ogbl-ppa
+        name = "ogbl-citation2-text"  ## original name, e.g., ogbl-ppa
 
-        self.dir_name = "_".join(self.name.split("-"))
-        self.original_root = root
-        self.root = osp.join(root, self.dir_name)
-        self.meta_info = {
+        meta_info = {
             "download_name": "citation-v2",
             "task_type": "link prediction",
             "eval_metric": "mrr",
@@ -45,25 +49,12 @@ class OgblCitation2WithText(InMemoryDataset):
             "is_hetero": False,
             "binary": False,
             "graph_url": "http://snap.stanford.edu/ogb/data/linkproppred/citation-v2.zip",
+            "text_url": "https://drive.google.com/u/0/uc?id=19_hkbBUDFZTvQrM0oMbftuXhgz5LbIZY&export=download",
             "tokenizer": tokenizer,
         }
-        rank = int(os.getenv("RANK", -1))
-        self.binary = self.meta_info["binary"]
-        self.is_hetero = self.meta_info["is_hetero"]
-        self.download_name = self.meta_info["download_name"]
-        if rank in [0, -1]:  # check the metainfo
-            metainfo = self.load_metainfo()
-            if metainfo is not None and tokenize and metainfo["tokenizer"] != tokenizer:
-                logger.critical("The tokenizer is changed. Reprocessing the dataset.")
-                shutil.rmtree(osp.join(self.root, "processed"), ignore_errors=True)
-        if rank not in [0, -1]:
-            dist.barrier()
-        super(OgblCitation2WithText, self).__init__(self.root, transform, pre_transform)
-        if rank == 0:
-            dist.barrier()
-        if rank in [0, -1] and tokenize:
-            self.save_metainfo()
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        super(OgblCitation2WithText, self).__init__(
+            name, meta_info, root, transform, pre_transform, tokenizer, tokenize
+        )
 
     def get_edge_split(self, split_type=None):
         if split_type is None:
@@ -71,25 +62,47 @@ class OgblCitation2WithText(InMemoryDataset):
 
         path = osp.join(self.root, "split", split_type)
 
-        # short-cut if split_dict.pt exists
-        if os.path.isfile(os.path.join(path, "split_dict.pt")):
-            return torch.load(os.path.join(path, "split_dict.pt"))
+        split_idx = {"train": None, "valid": None, "test": None}
+        for key, item in split_idx.items():
+            split_idx[key] = replace_numpy_with_torchtensor(torch.load(osp.join(path, f"{key}.pt")))
 
-        train = replace_numpy_with_torchtensor(torch.load(osp.join(path, "train.pt")))
-        valid = replace_numpy_with_torchtensor(torch.load(osp.join(path, "valid.pt")))
-        test = replace_numpy_with_torchtensor(torch.load(osp.join(path, "test.pt")))
+        # subset with subset_node_idx and relable nodes
+        subset_node_idx = self._get_subset_node_idx()
+        num_nodes, edge_index = 0, {}
+        for key in split_idx.keys():
+            edge_index[key] = torch.stack([split_idx[key]["source_node"], split_idx[key]["target_node"]], dim=0)
+            if key in ["valid", "test"]:
+                edge_index[key] = torch.cat([edge_index[key], split_idx[key]["target_node_neg"].t()], dim=0)
+            num_nodes = max(num_nodes, int(edge_index[key].max()) + 1)
 
-        return {"train": train, "valid": valid, "test": test}
+        def subset_and_relabeling(edge_index, subset, num_nodes):
+            node_mask = index_to_mask(subset, size=num_nodes)
+            edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
+            edge_index = edge_index[:, edge_mask]
+            # relabel
+            node_idx = torch.zeros(num_nodes, dtype=torch.long)
+            node_idx[node_mask] = torch.arange(node_mask.sum())
+            edge_index = node_idx[edge_index]
+            # BUG: some out-of-subset edges may appear, relabel them to 0
+            return edge_index
+
+        for key in split_idx.keys():
+            edge_index[key] = subset_and_relabeling(edge_index[key], subset_node_idx, num_nodes)
+            split_idx[key]["source_node"], split_idx[key]["target_node"] = edge_index[key][0], edge_index[key][1]
+            if key in ["valid", "test"]:
+                split_idx[key]["target_node_neg"] = edge_index[key][2:].t()
+
+        return split_idx
 
     @property
     def raw_file_names(self):
-        if self.binary:
-            if self.is_hetero:
+        if self.meta_info["binary"]:
+            if self.meta_info["is_hetero"]:
                 return ["edge_index_dict.npz"]
             else:
                 return ["data.npz"]
         else:
-            if self.is_hetero:
+            if self.meta_info["is_hetero"]:
                 return ["num-node-dict.csv.gz", "triplet-type-list.csv.gz"]
             else:
                 file_names = ["edge"]
@@ -99,100 +112,84 @@ class OgblCitation2WithText(InMemoryDataset):
                     file_names.append("edge-feat")
                 return [file_name + ".csv.gz" for file_name in file_names]
 
-    @property
-    def processed_file_names(self):
-        return osp.join("geometric_data_processed.pt")
-
     def download(self):
-        url = self.meta_info["url"]
-        if decide_download(url):
-            path = download_url(url, self.original_root)
+        graph_url = self.meta_info["graph_url"]
+        if decide_download(graph_url):
+            path = download_url(graph_url, self.original_root)
             extract_zip(path, self.original_root)
+            # download text data from google drive
+            output = osp.join(self.original_root, self.meta_info["download_name"], "raw", "idx_title_abs.csv.gz")
+            if osp.exists(output) and osp.getsize(output) > 0:
+                logger.info(f"Using existing file {output}")
+            else:
+                gdown.download(url=self.meta_info["text_url"], output=output, quiet=False, fuzzy=False)
+            # cleanup
             os.unlink(path)
             shutil.rmtree(self.root)
-            shutil.move(osp.join(self.original_root, self.download_name), self.root)
+            shutil.move(osp.join(self.original_root, self.meta_info["download_name"]), self.root)
         else:
-            print("Stop downloading.")
+            logger.warning("Stop downloading.")
             shutil.rmtree(self.root)
             exit(-1)
 
     def process(self):
         add_inverse_edge = self.meta_info["add_inverse_edge"] == "True"
 
-        if self.meta_info["additional node files"] == "None":
-            additional_node_files = []
-        else:
-            additional_node_files = self.meta_info["additional node files"].split(",")
-
-        if self.meta_info["additional edge files"] == "None":
-            additional_edge_files = []
-        else:
-            additional_edge_files = self.meta_info["additional edge files"].split(",")
-
-        if self.is_hetero:
-            data = read_heterograph_pyg(
-                self.raw_dir,
-                add_inverse_edge=add_inverse_edge,
-                additional_node_files=additional_node_files,
-                additional_edge_files=additional_edge_files,
-                binary=self.binary,
-            )[0]
-        else:
-            data = read_graph_pyg(
-                self.raw_dir,
-                add_inverse_edge=add_inverse_edge,
-                additional_node_files=additional_node_files,
-                additional_edge_files=additional_edge_files,
-                binary=self.binary,
-            )[0]
+        data = read_graph_pyg(
+            self.raw_dir,
+            add_inverse_edge=add_inverse_edge,
+            additional_node_files=self.meta_info["additional_node_files"],
+            additional_edge_files=self.meta_info["additional_edge_files"],
+            binary=self.meta_info["binary"],
+        )[0]
 
         data = data if self.pre_transform is None else self.pre_transform(data)
+        subset_node_idx = self._get_subset_node_idx()
+        data = data.subgraph(subset_node_idx)
 
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
 
-    def save_metainfo(self):
-        w_path = osp.join(self.root, "processed/meta_info.json")
-        with open(w_path, "w") as outfile:
-            json.dump(self.meta_info, outfile)
+    def _mapping_and_tokenizing(self):
+        df = pd.read_csv(osp.join(self.raw_dir, "idx_title_abs.csv.gz"))
+        df.sort_values(by="node idx", inplace=True)
+        df["abstitle"] = "title: " + df["title"] + "; " + "abstract: " + df["abstract"]
+        input_ids, attention_mask, truncated_size = [], [], 10000
+        text_list = df["abstitle"].values.tolist()
+        print("Tokenizing...")
+        for i in tqdm(range(0, len(df), truncated_size)):
+            j = min(len(text_list), i + truncated_size)
+            _encodings = self.tokenizer(text_list[i:j], padding=True, truncation=True, return_tensors="pt")
+            input_ids.append(_encodings.input_ids)
+            attention_mask.append(_encodings.attention_mask)
+        input_ids, attention_mask = torch.cat(input_ids, dim=0), torch.cat(attention_mask, dim=0)
+        return input_ids, attention_mask
 
-    def load_metainfo(self):
-        r_path = osp.join(self.root, "processed/meta_info.json")
-        if not osp.exists(r_path):
-            return None
-        return json.loads(open(r_path).read())
-
-    def __repr__(self):
-        return "{}()".format(self.__class__.__name__)
+    def _get_subset_node_idx(self):
+        df = pd.read_csv(osp.join(self.raw_dir, "idx_title_abs.csv.gz"))
+        df.astype({"node idx": np.int64})
+        node_idx = torch.tensor(df["node idx"].values.tolist(), dtype=torch.long)
+        return node_idx
 
 
 if __name__ == "__main__":
-    pyg_dataset = OgblCitation2WithText()
-    split_edge = pyg_dataset.get_edge_split()
-    print(pyg_dataset[0])
-    exit(-1)
-
-    pyg_dataset = PygLinkPropPredDataset(name="ogbl-ddi")
-    split_edge = pyg_dataset.get_edge_split()
-    print(pyg_dataset[0])
-    print(pyg_dataset[0].num_nodes)
-    print(split_edge["train"])
-    print(split_edge["test"])
-    pyg_dataset = PygLinkPropPredDataset(name="ogbl-wikikg")
-    split_edge = pyg_dataset.get_edge_split()
-    print(pyg_dataset[0])
-    print(pyg_dataset[0].num_nodes)
-    print(split_edge["train"])
-    print(split_edge["test"])
-    pyg_dataset = PygLinkPropPredDataset(name="ogbl-citation")
-    split_edge = pyg_dataset.get_edge_split()
-    print(split_edge["train"])
-    print(split_edge["test"])
-    pyg_dataset = PygLinkPropPredDataset(name="ogbl-ppa")
-    split_edge = pyg_dataset.get_edge_split()
-    print(split_edge["train"])
-    print(split_edge["test"])
-    pyg_dataset = PygLinkPropPredDataset(name="ogbl-collab")
-    split_edge = pyg_dataset.get_edge_split()
-    print(split_edge["train"])
-    print(split_edge["test"])
+    set_logging()
+    pyg_dataset = OgblCitation2WithText("../data")
+    data = pyg_dataset.data
+    # split_edge = pyg_dataset.get_edge_split()
+    # for split in split_edge.keys():
+    #     source_max = split_edge[split]["source_node"].max()
+    #     target_max = split_edge[split]["target_node"].max()
+    #     logger.info(f"max source node id in {split}: {source_max}")
+    #     logger.info(f"max target node id in {split}: {target_max}")
+    # num_edge_list = []
+    # for split in split_edge.keys():
+    #     num_edge = split_edge[split]["source_node"].size(0)
+    #     num_edge_list.append(num_edge)
+    # print(num_edge_list)
+    # num_edges = sum(num_edge_list)
+    # print(num_edges)
+    # print(data.x.size(0) / num_edges)
+    # print([_ / num_edges for _ in num_edge_list])
+    # print(data.x.shape)
+    # exit(-1)

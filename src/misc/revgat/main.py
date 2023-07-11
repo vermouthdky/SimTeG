@@ -1,7 +1,6 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import argparse
+import csv
 import gc
 import logging
 import math
@@ -25,6 +24,9 @@ from optuna.trial import TrialState
 from ...utils import set_logging
 from .loss import loss_kd_only
 from .model_rev import RevGAT
+
+# -*- coding: utf-8 -*-
+
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ def seed(seed=0):
 def load_data(dataset, args):
     global n_node_feats, n_classes
 
-    data = DglNodePropPredDataset(name=dataset)
+    data = DglNodePropPredDataset(name=dataset, root="../dgl_data")
     evaluator = Evaluator(name=dataset)
 
     splitted_idx = data.get_idx_split()
@@ -62,8 +64,28 @@ def load_data(dataset, args):
         logger.warning(
             "Loaded pre-trained node embeddings of shape={} from {}".format(graph.ndata["feat"].shape, args.bert_x_dir)
         )
+    # TODO
+    elif args.use_gpt_preds:
+        preds = []
+        with open(f"src/misc/gpt_preds/ogbn-arxiv.csv", "r") as file:
+            reader = csv.reader(file)
+            for row in reader:
+                inner_list = []
+                for value in row:
+                    inner_list.append(int(value))
+                preds.append(inner_list)
+        pl = torch.zeros(len(preds), 5, dtype=torch.long)
+        for i, pred in enumerate(preds):
+            pl[i][: len(pred)] = torch.tensor(pred[:5], dtype=torch.long) + 1
+        graph.ndata["feat"] = pl
+        logger.warning(
+            "Loaded pre-trained node embeddings of shape={} from gpt_preds".format(graph.ndata["feat"].shape)
+        )
 
-    n_node_feats = graph.ndata["feat"].shape[1]
+    if args.use_gpt_preds:
+        n_node_feats = args.n_hidden * 5
+    else:
+        n_node_feats = graph.ndata["feat"].shape[1]
     n_classes = (labels.max() + 1).item()
 
     return graph, labels, train_idx, val_idx, test_idx, evaluator
@@ -107,6 +129,7 @@ def gen_model(args):
             edge_drop=args.edge_drop,
             use_attn_dst=not args.no_attn_dst,
             use_symmetric_norm=args.use_norm,
+            use_gpt_preds=args.use_gpt_preds,
         )
     else:
         raise Exception("Unknown backnone")
@@ -345,7 +368,8 @@ def run(args, graph, labels, train_idx, val_idx, test_idx, evaluator, n_running)
 
     if args.save_pred:
         os.makedirs(f"{args.output_dir}/cached_embs", exist_ok=True)
-        torch.save(F.softmax(final_pred, dim=1), f"{args.output_dir}/cached_embs/{n_running}.pt")
+        torch.save(final_pred, f"{args.output_dir}/cached_embs/logits_seed{n_running}.pt")
+        logger.warning(f"Saved logits to {args.output_dir}/cached_embs/logits_seed{n_running}.pt")
 
     return best_val_acc, final_test_acc
 
@@ -359,9 +383,10 @@ def parse_args():
     argparser = argparse.ArgumentParser(
         "GAT implementation on ogbn-arxiv", formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
+    argparser.add_argument("--suffix", type=str)
     argparser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     argparser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
-    argparser.add_argument("--seed", type=int, default=0, help="seed")
+    argparser.add_argument("--seed", type=int, default=42, help="seed")
     argparser.add_argument("--n-runs", type=int, default=10, help="running times")
     argparser.add_argument("--n-epochs", type=int, default=200, help="number of epochs")
     argparser.add_argument(
@@ -395,6 +420,8 @@ def parse_args():
     argparser.add_argument("--ckpt_dir", type=str)
     argparser.add_argument("--output_dir", type=str)
     argparser.add_argument("--label_smoothing_factor", type=float, default=0.3)
+    argparser.add_argument("--save_pred", action="store_true")
+    argparser.add_argument("--use_gpt_preds", action="store_true")
     args = argparser.parse_args()
     return args
 

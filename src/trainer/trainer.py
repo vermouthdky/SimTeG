@@ -75,7 +75,7 @@ class Trainer(ABC):
         model.load_state_dict(ckpt, strict=False)
 
     def _prepare_model(self):
-        model_class = get_model_class(self.args.model_type, self.args.use_adapter)
+        model_class = get_model_class(self.args.model_type, self.args.task_type)
         model = model_class(self.args)
         n_params = sum(p.numel() for p in model.parameters())
         logger.warning(f"Model: {self.args.model_type}, Num of Params: {n_params}")
@@ -126,13 +126,14 @@ class Trainer(ABC):
         for split in ["train", "valid", "test"]:
             split_idx = self.split_idx[split]
             acc = accuracy(logits[split_idx], y[split_idx])
-            loss = F.cross_entropy(logits[split_idx], y[split_idx].view(-1)).item()
             results[f"{split}_acc"] = acc
-            results[f"{split}_loss"] = loss
+            if logits.dtype is not torch.half:
+                loss = F.cross_entropy(logits[split_idx], y[split_idx].view(-1)).item()
+                results[f"{split}_loss"] = loss
         return results
 
     def inference_and_evaluate(self, dataset):
-        embs_path = os.path.join(self.trainer.args.output_dir, "cached_embs")
+        embs_path = os.path.join(self.args.output_dir, "cached_embs")
         logits_embs, x_embs = self.inference(dataset, embs_path)
         results = self._evaluate(logits_embs, self.data.y)
         logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
@@ -169,4 +170,5 @@ class Trainer(ABC):
         _, _, results = self.inference_and_evaluate(self.all_set)
         gc.collect()
         torch.cuda.empty_cache()
-        return results["valid_acc"] if return_value == "valid" else results["test_acc"]
+        torch.save(self.model.state_dict(), self.ckpt_path)
+        return results["test_acc"], results["valid_acc"]

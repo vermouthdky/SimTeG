@@ -271,6 +271,8 @@ class RevGAT(nn.Module):
         use_attn_dst=True,
         use_symmetric_norm=False,
         group=2,
+        use_gpt_preds=False,
+        input_norm=True,
     ):
         super().__init__()
         self.in_feats = in_feats
@@ -282,6 +284,11 @@ class RevGAT(nn.Module):
 
         self.convs = nn.ModuleList()
         self.norm = nn.BatchNorm1d(n_heads * n_hidden)
+        if input_norm:
+            self.input_norm = nn.BatchNorm1d(in_feats)
+
+        if use_gpt_preds:
+            self.encoder = torch.nn.Embedding(n_classes + 1, n_hidden)
 
         for i in range(n_layers):
             in_hidden = n_heads * n_hidden if i > 0 else in_feats
@@ -336,30 +343,36 @@ class RevGAT(nn.Module):
         self.activation = activation
 
     def forward(self, graph, feat):
-        h = feat
-        h = self.input_drop(h)
+        x = feat
+        if hasattr(self, "encoder"):
+            embs = self.encoder(x[:, :5].to(torch.long))
+            embs = torch.flatten(embs, start_dim=1)
+            x = torch.cat([embs, x[:, 5:]], dim=1)
+        if hasattr(self, "input_norm"):
+            x = self.input_norm(x)
+        x = self.input_drop(x)
 
         self.perms = []
         for i in range(self.n_layers):
             perm = torch.randperm(graph.number_of_edges(), device=graph.device)
             self.perms.append(perm)
 
-        h = self.convs[0](graph, h, self.perms[0]).flatten(1, -1)
+        x = self.convs[0](graph, x, self.perms[0]).flatten(1, -1)
 
-        m = torch.zeros_like(h).bernoulli_(1 - self.dropout)
+        m = torch.zeros_like(x).bernoulli_(1 - self.dropout)
         mask = m.requires_grad_(False) / (1 - self.dropout)
 
         for i in range(1, self.n_layers - 1):
             graph.requires_grad = False
             perm = torch.stack([self.perms[i]] * self.group, dim=1)
-            h = self.convs[i](h, graph, mask, perm)
+            x = self.convs[i](x, graph, mask, perm)
 
-        h = self.norm(h)
-        h = self.activation(h, inplace=True)
-        h = self.dp_last(h)
-        h = self.convs[-1](graph, h, self.perms[-1])
+        x = self.norm(x)
+        x = self.activation(x, inplace=True)
+        x = self.dp_last(x)
+        x = self.convs[-1](graph, x, self.perms[-1])
 
-        h = h.mean(1)
-        h = self.bias_last(h)
+        x = x.mean(1)
+        x = self.bias_last(x)
 
-        return h
+        return x

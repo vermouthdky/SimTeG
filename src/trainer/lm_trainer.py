@@ -1,17 +1,18 @@
 import gc
 import logging
 import os.path as osp
+from typing import List, Optional
 
 import evaluate
 import numpy as np
 import torch
 import torch.distributed as dist
+from torch.utils.data import DataLoader
 from transformers import EarlyStoppingCallback
 from transformers import Trainer as HugTrainer
 from transformers import TrainingArguments
+from transformers.trainer_utils import PredictionOutput
 
-from ..model import get_model_class
-from ..utils import EmbeddingHandler, is_dist
 from .trainer import Trainer
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ class LMTrainer(Trainer):
             local_rank=self.rank,
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
+            deepspeed=self.args.deepspeed,
+            fp16=self.args.fp16,
+            bf16=self.args.bf16,
         )
         return InnerTrainer(
             model=self.model,
