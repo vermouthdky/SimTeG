@@ -151,7 +151,7 @@ class OgbnArxivWithText(OgbWithText):
 
 if __name__ == "__main__":
     set_logging()
-    pyg_dataset = OgbnArxivWithText("../data")
+    pyg_dataset = OgbnArxivWithText("../test_data")
     print(pyg_dataset[0])
     split_index = pyg_dataset.get_idx_split()
     print(split_index)

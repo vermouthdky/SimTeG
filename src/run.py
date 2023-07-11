@@ -1,3 +1,4 @@
+import csv
 import gc
 import logging
 import os
@@ -32,7 +33,7 @@ def cleanup():
 
 
 def load_data(args):
-    assert args.dataset in ["ogbn-arxiv", "ogbl-citation2", "ogbn-products"]
+    assert args.dataset in ["ogbn-arxiv", "ogbl-citation2", "ogbn-products", "ogbn-arxiv-tape"]
     tokenize = args.model_type not in GNN_LIST
     data, split_idx, evaluator = load_data_bundle(
         args.dataset, root=args.data_folder, tokenizer=args.pretrained_repo, tokenize=tokenize
@@ -53,6 +54,20 @@ def load_data(args):
         assert giant_x.size(0) == data.x.size(0)
         logger.warning(f"using giant x loaded from {args.giant_x_dir}")
         data.x = giant_x
+    elif args.use_gpt_preds:
+        assert args.dataset == "ogbn-arxiv"
+        preds = []
+        with open(f"src/misc/gpt_preds/ogbn-arxiv.csv", "r") as file:
+            reader = csv.reader(file)
+            for row in reader:
+                inner_list = []
+                for value in row:
+                    inner_list.append(int(value))
+                preds.append(inner_list)
+        pl = torch.zeros(len(preds), 5, dtype=torch.long)
+        for i, pred in enumerate(preds):
+            pl[i][: len(pred)] = torch.tensor(pred[:5], dtype=torch.long) + 1
+        data.x = pl
 
     if args.debug:
         all_idx = torch.arange(0, 3000)

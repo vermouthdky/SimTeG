@@ -61,7 +61,24 @@ class GAMLP(nn.Module):
 class GraphSAGE(nn.Module):
     def __init__(self, args):
         super(GraphSAGE, self).__init__()
-        self.gnn_model = SAGE(args.num_feats, args.hidden_size, args.num_labels, args.gnn_num_layers, args.gnn_dropout)
+        if args.use_gpt_preds:
+            self.gnn_model = SAGE(
+                5 * args.hidden_size,
+                args.hidden_size,
+                args.num_labels,
+                args.gnn_num_layers,
+                args.gnn_dropout,
+                use_gpt_preds=True,
+            )
+        else:
+            self.gnn_model = SAGE(
+                args.num_feats,
+                args.hidden_size,
+                args.num_labels,
+                args.gnn_num_layers,
+                args.gnn_dropout,
+                use_gpt_preds=False,
+            )
 
     def reset_parameters(self):
         self.gnn_model.reset_parameters()
@@ -71,7 +88,11 @@ class GraphSAGE(nn.Module):
 
     @torch.no_grad()
     def inference(self, x_all, device, subgraph_loader):
-        return self.gnn_model.inference(x_all, device, subgraph_loader)
+        xs = []
+        for batch in subgraph_loader:
+            x = self.gnn_model(batch.x.to(device), batch.edge_index.to(device))[: batch.batch_size]
+            xs.append(x.cpu())
+        return torch.cat(xs, dim=0)
 
 
 class GCN(nn.Module):

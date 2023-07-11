@@ -23,7 +23,7 @@ SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
 DECOUPLING_GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC"]
 
 LINK_PRED_DATASETS = ["ogbl-citation2"]
-NODE_CLS_DATASETS = ["ogbn-arxiv", "ogbn-products"]
+NODE_CLS_DATASETS = ["ogbn-arxiv", "ogbn-products", "ogbn-arxiv-tape"]
 
 
 def parse_args():
@@ -76,8 +76,10 @@ def parse_args():
     parser.add_argument("--use_default_config", action="store_true", default=False)
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--use_giant_x", action="store_true", default=False)
+    parser.add_argument("--use_gpt_preds", action="store_true", default=False)
     parser.add_argument("--fp16", action="store_true", default=False)
     parser.add_argument("--bf16", action="store_true", default=False)
+    parser.add_argument("--compute_ensemble", action="store_true", default=False)
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -136,12 +138,8 @@ def parse_args():
     parser.add_argument("--peft_lora_dropout", type=float, default=0.1)
 
     # other hyperparameters
-    parser.add_argument(
-        "--train_mode",
-        type=str,
-        default="both",
-        help="both: train lm and gnn in each iteration; lm: only train lm in each iteration and train GNN in iter 0",
-    )
+    parser.add_argument("--train_mode", type=str, default="both")
+    parser.add_argument("--list_logits", nargs="+", default=[], help="for ensembling")
     args = parser.parse_args()
     args = _post_init(args)
     return args
@@ -198,7 +196,7 @@ def _set_pretrained_repo(args):
 
 
 def _set_dataset_specific_args(args):
-    if args.dataset == "ogbn-arxiv":
+    if args.dataset in ["ogbn-arxiv", "ogbn-arxiv-tape"]:
         args.num_labels = 40
         args.num_feats = 128
         args.expected_valid_acc = 0.6
@@ -232,6 +230,8 @@ def _set_dataset_specific_args(args):
         args.num_feats = args.hidden_size = hidden_size_dict[args.lm_type]
     elif args.use_giant_x:
         args.num_feats = args.hidden_size = 768
+    elif args.use_gpt_preds:
+        args.num_feats = 5
 
     return args
 

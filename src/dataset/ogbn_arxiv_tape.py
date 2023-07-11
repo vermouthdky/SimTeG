@@ -14,6 +14,7 @@ from ogb.io.read_graph_pyg import read_graph_pyg
 from ogb.utils.url import download_url, extract_zip
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.transforms import ToSparseTensor
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from ..utils import dist_barrier_context, is_dist, set_logging
@@ -31,7 +32,7 @@ class OgbnArxivWithTAPE(OgbWithText):
         tokenizer="sentence-transformers/all-MiniLM-L6-v2",
         tokenize=True,
     ):
-        name = "ogbn-arxiv-text-tape"  ## original name, e.g., ogbn-proteins
+        name = "ogbn-arxiv-tape"  ## original name, e.g., ogbn-proteins
         meta_info = {
             "download_name": "arxiv",
             "num_tasks": 1,
@@ -127,16 +128,20 @@ class OgbnArxivWithTAPE(OgbWithText):
         # modified from https://github.com/XiaoxinHe/TAPE/blob/main/core/data_utils/load.py
         text_res = dict(text=[], node_id=[])
         num_nodes = data.y.size(0)
-        for i in range(num_nodes):
+        for i in tqdm(range(num_nodes), desc="Processing text"):
             filename = str(i) + ".json"
-            file_path = os.path.join(self.raw_dir, "tape", "ogbn-arxiv", filename)
+            file_path = os.path.join(self.raw_dir, "tape", filename)
             with open(file_path, "r") as f:
                 json_data = json.load(f)
-                content = json_data["choices"][0]["message"]["content"]
-                text_res["text"].append(content)
+                content = json_data["choices"][0]["message"]["content"].split("\n\n")
+                if len(content) == 1:
+                    text = content[0].replace("\n", " ")
+                else:
+                    text = " ".join(content[1:]).replace("\n", " ")
+                text_res["text"].append(text)
                 text_res["node_id"].append(i)
         text_res = pd.DataFrame(text_res)
-        text_res.to_csv(osp.join(self.raw_dir, "tape.csv.gz"), compression="gzip", header=None, index=False)
+        text_res.to_csv(osp.join(self.raw_dir, "tape.csv.gz"))
         print("Saving...")
         torch.save(self.collate([data]), self.processed_paths[0])
 
@@ -148,10 +153,9 @@ class OgbnArxivWithTAPE(OgbWithText):
         """
         df = pd.read_csv(osp.join(self.raw_dir, "tape.csv.gz"))
         df.sort_values(by="node_id", inplace=True)
-        df["explanation"] = "Addtional explanation of the paper: " + df["text"]
         logger.info("tokenizing...")
         text_encoding = self.tokenizer(
-            df["explanation"].values.tolist(),
+            df["text"].tolist(),
             padding=True,
             truncation=True,
             return_tensors="pt",

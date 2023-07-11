@@ -234,11 +234,16 @@ class GNNSamplingTrainer:  # single gpu
         return loss, approx_acc
 
     @torch.no_grad()
-    def eval(self):
+    def eval(self, save_out=False):
         self.model.eval()
         out = self.model.inference(self.data.x, self.device, self.subgraph_loader)
         y_true = self.data.y.cpu()
         y_pred = out.argmax(dim=-1, keepdim=True)
+        if save_out:
+            embs_dir = osp.join(self.args.output_dir, "cached_embs")
+            os.makedirs(embs_dir, exist_ok=True)
+            torch.save(out, osp.join(embs_dir, f"logits_seed{self.args.random_seed}.pt"))
+            logger.warning(f"saved logits to {embs_dir}/logits{self.args.random_seed}.pt")
 
         train_acc = self.evaluator.eval(
             {
@@ -279,17 +284,24 @@ class GNNSamplingTrainer:  # single gpu
                     accumulate_patience = 0
                     best_val_acc = val_acc
                     final_test_acc = test_acc
+                    torch.save(
+                        self.model.state_dict(),
+                        os.path.join(self.args.ckpt_dir, f"model_seed{self.args.random_seed}.pt"),
+                    )
                 else:
                     accumulate_patience += 1
-                    if accumulate_patience >= 2:
+                    if accumulate_patience >= 10:
                         break
                 if self.trial is not None:
                     self.trial.report(val_acc, epoch)
                     if self.trial.should_prune():
                         raise optuna.exceptions.TrialPruned()
-        logger.info(f"best_val_acc: {best_val_acc:.4f}, final_test_acc: {final_test_acc:.4f}")
-        torch.save(self.model.state_dict(), os.path.join(self.args.ckpt_dir, "model.pt"))
-        return final_test_acc, best_val_acc
+        self.model.load_state_dict(
+            torch.load(os.path.join(self.args.ckpt_dir, f"model_seed{self.args.random_seed}.pt"))
+        )
+        train_acc, val_acc, test_acc = self.eval(save_out=True)
+        logger.info(f"best_train_acc: {train_acc:.4f}, best_valid_acc: {val_acc:.4f}, best_test_acc: {test_acc:.4f}")
+        return test_acc, val_acc
 
 
 class MLPTrainer:
