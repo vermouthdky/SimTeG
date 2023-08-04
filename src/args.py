@@ -29,7 +29,9 @@ NODE_CLS_DATASETS = ["ogbn-arxiv", "ogbn-products", "ogbn-arxiv-tape"]
 def parse_args():
     parser = argparse.ArgumentParser()
     # environment
-    parser.add_argument("--mode", type=str, default="train", choices=["train", "test", "save_bert_x"])
+    parser.add_argument(
+        "--mode", type=str, default="train", choices=["train", "test", "save_bert_x"]
+    )
     parser.add_argument("--single_gpu", type=int, default=0)
     parser.add_argument("--random_seed", type=int, default=0)
     parser.add_argument("--start_seed", type=int, default=42)
@@ -46,32 +48,52 @@ def parse_args():
     parser.add_argument("--task_type", type=str, default="node_cls")
     parser.add_argument("--output_dir", type=str)  # output dir
     parser.add_argument("--ckpt_dir", type=str)  # ckpt path to save
-    parser.add_argument("--ckpt_name", type=str, default="TGRoberta-best.pt")  # ckpt name to be loaded
+    parser.add_argument(
+        "--ckpt_name", type=str, default="TGRoberta-best.pt"
+    )  # ckpt name to be loaded
     parser.add_argument("--pretrained_dir", type=str, default="./pretrained")
-    parser.add_argument("--pretrained_repo", type=str, help="has to be consistent with repo_id in huggingface")
+    parser.add_argument(
+        "--pretrained_repo",
+        type=str,
+        help="has to be consistent with repo_id in huggingface",
+    )
     parser.add_argument("--bert_x_dir", type=str, help="used when use_bert_x is True")
     parser.add_argument("--giant_x_dir", type=str, help="used when use_bert_x is True")
 
     # dataset and fixed model args
     parser.add_argument("--num_labels", type=int)
     parser.add_argument("--num_feats", type=int)
-    parser.add_argument("--hidden_size", type=int, default=768, help="hidden size of bert-like model")
+    parser.add_argument(
+        "--hidden_size", type=int, default=768, help="hidden size of bert-like model"
+    )
 
     # flag
     parser.add_argument("--disable_tqdm", action="store_true", default=False)
     parser.add_argument("--use_bert_x", action="store_true", default=False)
-    parser.add_argument("--debug", action="store_true", default=False, help="will use mini dataset")
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="will use mini dataset"
+    )
     parser.add_argument("--use_adapter", action="store_true", default=False)
     parser.add_argument(
-        "--use_SLE", action="store_true", default=False, help="whether to use self-label-enhancement (SLE)"
+        "--use_SLE",
+        action="store_true",
+        default=False,
+        help="whether to use self-label-enhancement (SLE)",
     )
-    parser.add_argument("--optuna", type=bool, default=False, help="use optuna to tune hyperparameters")
+    parser.add_argument(
+        "--optuna", type=bool, default=False, help="use optuna to tune hyperparameters"
+    )
     parser.add_argument("--use_cache", action="store_true", default=False)
     parser.add_argument("--save_ckpt_per_valid", action="store_true", default=False)
     parser.add_argument("--eval_train_set", action="store_true", default=False)
     parser.add_argument("--inherit", action="store_true", default=False)
     parser.add_argument("--gnn_inherit", action="store_true", default=False)
-    parser.add_argument("--fix_gnn", action="store_true", default=False, help="fix gnn model when finetuning bert")
+    parser.add_argument(
+        "--fix_gnn",
+        action="store_true",
+        default=False,
+        help="fix gnn model when finetuning bert",
+    )
     parser.add_argument("--compute_kl_loss", action="store_true", default=False)
     parser.add_argument("--use_default_config", action="store_true", default=False)
     parser.add_argument("--use_peft", action="store_true", default=False)
@@ -88,7 +110,12 @@ def parse_args():
     parser.add_argument("--eval_batch_size", type=int, default=10)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--accum_interval", type=int, default=1)
-    parser.add_argument("--hidden_dropout_prob", type=float, default=0.1, help="consistent with the one in bert")
+    parser.add_argument(
+        "--hidden_dropout_prob",
+        type=float,
+        default=0.1,
+        help="consistent with the one in bert",
+    )
     parser.add_argument("--header_dropout_prob", type=float, default=0.2)
     parser.add_argument("--attention_dropout_prob", type=float, default=0.1)
     parser.add_argument("--adapter_hidden_size", type=int, default=768)
@@ -96,17 +123,26 @@ def parse_args():
     parser.add_argument("--warmup_ratio", type=float, default=0.6)
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
-    parser.add_argument("--lr_scheduler_type", type=str, default="linear", choices=["linear", "constant"])
+    parser.add_argument(
+        "--lr_scheduler_type",
+        type=str,
+        default="linear",
+        choices=["linear", "constant"],
+    )
     parser.add_argument("--eval_delay", type=int, default=0)
     # parameters for kl loss
     parser.add_argument("--kl_loss_weight", type=float, default=1)
-    parser.add_argument("--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp")
+    parser.add_argument(
+        "--kl_loss_temp", type=int, default=0, help="kl_loss *= 2**kl_loss_temp"
+    )
     # training hyperparameters for SLE
     parser.add_argument("--mlp_dim_hidden", type=int, default=128)
     parser.add_argument("--SLE_threshold", type=float, default=0.9)
     parser.add_argument("--eval_interval", type=int, default=5)
     parser.add_argument("--eval_patience", type=int, default=50000)
-    parser.add_argument("--SLE_mode", type=str, default="both", choices=["gnn", "lm", "both"])
+    parser.add_argument(
+        "--SLE_mode", type=str, default="both", choices=["gnn", "lm", "both"]
+    )
 
     # module hyperparameters
     parser.add_argument("--lm_type", type=str, default="Deberta")
@@ -124,7 +160,12 @@ def parse_args():
     parser.add_argument("--gnn_eval_batch_size", type=int, default=10000)
     parser.add_argument("--gnn_epochs", type=int, default=500)
     parser.add_argument("--gnn_warmup_ratio", type=float, default=0.25)
-    parser.add_argument("--gnn_lr_scheduler_type", type=str, default="constant", choices=["constant", "linear"])
+    parser.add_argument(
+        "--gnn_lr_scheduler_type",
+        type=str,
+        default="constant",
+        choices=["constant", "linear"],
+    )
     parser.add_argument("--gnn_eval_warmup", type=int, default=0)
 
     # optuna hyperparameters

@@ -53,7 +53,11 @@ def set_seed(random_seed):
 def print_metrics(metrics: dict, type):
     results = {key: (np.mean(value), np.std(value)) for key, value in metrics.items()}
     logger.critical(
-        f"{type} Metrics:\n" + "\n".join("{}: {} ± {} ".format(k, _mean, _std) for k, (_mean, _std) in results.items())
+        f"{type} Metrics:\n"
+        + "\n".join(
+            "{}: {} ± {} ".format(k, _mean, _std)
+            for k, (_mean, _std) in results.items()
+        )
     )
 
 
@@ -99,11 +103,19 @@ def main(args):
             test_acc, val_acc = train(args, return_value="test")
             test_acc_list.append(test_acc)
             val_acc_list.append(val_acc)
-            logger.warning(f"current val_acc {np.mean(val_acc_list)} ± {np.std(val_acc_list)}")
-            logger.warning(f"current test_acc {np.mean(test_acc_list)} ± {np.std(test_acc_list)}")
+            logger.warning(
+                f"current val_acc {np.mean(val_acc_list)} ± {np.std(val_acc_list)}"
+            )
+            logger.warning(
+                f"current test_acc {np.mean(test_acc_list)} ± {np.std(test_acc_list)}"
+            )
         cleanup()
-        logger.critical(f"final val_acc {np.mean(val_acc_list)} ± {np.std(val_acc_list)}")
-        logger.critical(f"final test_acc {np.mean(test_acc_list)} ± {np.std(test_acc_list)}")
+        logger.critical(
+            f"final val_acc {np.mean(val_acc_list)} ± {np.std(val_acc_list)}"
+        )
+        logger.critical(
+            f"final test_acc {np.mean(test_acc_list)} ± {np.std(test_acc_list)}"
+        )
 
 
 if __name__ == "__main__":

@@ -54,7 +54,11 @@ class Dataset(torch.utils.data.Dataset):
         all_idx = torch.tensor([src, dst], dtype=torch.long)
         all_idx = torch.cat([all_idx, neg_dst])
         labels = torch.tensor([1] + [0] * NUM_NEG_PER_SAMPLE, dtype=torch.long)
-        data = dict(input_ids=self.input_ids[all_idx], att_mask=self.att_mask[all_idx], labels=labels)
+        data = dict(
+            input_ids=self.input_ids[all_idx],
+            att_mask=self.att_mask[all_idx],
+            labels=labels,
+        )
         return data
 
 
@@ -85,16 +89,25 @@ class InnerTrainer(HugTrainer):
 
         if return_outputs:  # evaluation
             pos_preds, neg_preds = None, []
-            for perm in DataLoader(torch.range(2, NUM_NEG_PER_SAMPLE), batch_size=10, shuffle=False):
+            for perm in DataLoader(
+                torch.range(2, NUM_NEG_PER_SAMPLE), batch_size=10, shuffle=False
+            ):
                 perm = torch.cat((torch.tensor([0, 1]), perm)).long()
-                batch_input_ids, batch_att_mask = input_ids[:, perm, :], att_mask[:, perm, :]
+                batch_input_ids, batch_att_mask = (
+                    input_ids[:, perm, :],
+                    att_mask[:, perm, :],
+                )
                 with torch.no_grad():
-                    pos_pred, neg_pred = model(batch_input_ids.cuda(), batch_att_mask.cuda())
+                    pos_pred, neg_pred = model(
+                        batch_input_ids.cuda(), batch_att_mask.cuda()
+                    )
                 pos_preds = pos_pred
                 neg_preds.append(neg_pred)
             pos_out, neg_out = pos_preds, torch.cat(neg_preds, dim=-1)
         else:
-            pos_out, neg_out = model(input_ids=input_ids.cuda(), att_mask=att_mask.cuda())
+            pos_out, neg_out = model(
+                input_ids=input_ids.cuda(), att_mask=att_mask.cuda()
+            )
 
         pos_loss = -torch.log(pos_out + eps).mean() / (input_ids.size(1) - 2)
         neg_loss = -torch.log(1 - neg_out + eps).mean()
@@ -107,14 +120,27 @@ class InnerTrainer(HugTrainer):
 class LinkLMTrainer(Trainer):
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test"]
-        src, dst = self.split_idx[mode]["source_node"], self.split_idx[mode]["target_node"]
+        src, dst = (
+            self.split_idx[mode]["source_node"],
+            self.split_idx[mode]["target_node"],
+        )
         # use the fist 100 for validation
         neg_dst = None if mode == "train" else self.split_idx[mode]["target_node_neg"]
         if mode == "valid":
             logger.warning("Use 0.01 of the validation set for fast evaluation")
             num_samples = src.size(0) // 100
-            src, dst, neg_dst = src[:num_samples], dst[:num_samples], neg_dst[:num_samples]
-        dataset = Dataset(self.data.input_ids, self.data.attention_mask, src=src, dst=dst, neg_dst=neg_dst)
+            src, dst, neg_dst = (
+                src[:num_samples],
+                dst[:num_samples],
+                neg_dst[:num_samples],
+            )
+        dataset = Dataset(
+            self.data.input_ids,
+            self.data.attention_mask,
+            src=src,
+            dst=dst,
+            neg_dst=neg_dst,
+        )
         return dataset
 
     def _prepare_dataset(self):
@@ -136,12 +162,16 @@ class LinkLMTrainer(Trainer):
         evaluator = Evaluator(name="ogbl-citation2")
         pos_out, neg_out = eval_pred[0]
         pos_out, neg_out = torch.from_numpy(pos_out), torch.from_numpy(neg_out)
-        results = evaluator.eval({"y_pred_pos": pos_out.view(-1), "y_pred_neg": neg_out})
+        results = evaluator.eval(
+            {"y_pred_pos": pos_out.view(-1), "y_pred_neg": neg_out}
+        )
         return {f"eval_{key[:-5]}": value.mean() for key, value in results.items()}
 
     def _prepare_trainer(self):
         # prepare training args
-        total_batch_size = self.world_size * self.args.batch_size * self.args.accum_interval
+        total_batch_size = (
+            self.world_size * self.args.batch_size * self.args.accum_interval
+        )
         eval_steps = self.args.eval_patience // total_batch_size
         train_steps = len(self.train_set) // total_batch_size + 1
         warmup_steps = self.args.warmup_ratio * train_steps
@@ -199,7 +229,9 @@ class LinkLMTrainer(Trainer):
             x_embs = eval_output.predictions
             x_embs = torch.from_numpy(x_embs)
             emb_handler.save(x_embs, x_embs_name)
-            logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
+            logger.info(
+                f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}"
+            )
         return x_embs
 
     def _evaluate(self, x_embs):
@@ -215,7 +247,9 @@ class LinkLMTrainer(Trainer):
             for perm in DataLoader(range(source.size(0)), 5000):
                 src, dst = source[perm], target[perm]
                 x_src, x_dst = x_embs[src].to(self.rank), x_embs[dst].to(self.rank)
-                pos_preds += [self.trainer.model.link_predict(x_src, x_dst).squeeze().cpu()]
+                pos_preds += [
+                    self.trainer.model.link_predict(x_src, x_dst).squeeze().cpu()
+                ]
             pos_pred = torch.cat(pos_preds, dim=0)
 
             neg_preds = []
@@ -223,11 +257,17 @@ class LinkLMTrainer(Trainer):
             target_neg = target_neg.reshape(-1)
             for perm in DataLoader(range(source.size(0)), 5000):
                 src, dst_neg = source[perm], target_neg[perm]
-                x_src, x_dst_neg = x_embs[src].to(self.rank), x_embs[dst_neg].to(self.rank)
-                neg_preds += [self.trainer.model.link_predict(x_src, x_dst_neg).squeeze().cpu()]
+                x_src, x_dst_neg = x_embs[src].to(self.rank), x_embs[dst_neg].to(
+                    self.rank
+                )
+                neg_preds += [
+                    self.trainer.model.link_predict(x_src, x_dst_neg).squeeze().cpu()
+                ]
             neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
 
-            results = evaluator.eval({"y_pred_pos": pos_pred.view(-1), "y_pred_neg": neg_pred})
+            results = evaluator.eval(
+                {"y_pred_pos": pos_pred.view(-1), "y_pred_neg": neg_pred}
+            )
             return {key[:-5]: value.mean().item() for key, value in results.items()}
 
         return test_split("valid"), test_split("test")
@@ -236,8 +276,14 @@ class LinkLMTrainer(Trainer):
         embs_path = osp.join(self.args.output_dir, "cached_embs")
         x_embs = self.inference(dataset, embs_path)
         valid_results, test_results = self._evaluate(x_embs)
-        logger.info(f"Valid Metrics:: " + "".join("{}: {:.4f} ".format(k, v) for k, v in valid_results.items()))
-        logger.info(f"Test Metrics:: " + "".join("{}: {:.4f} ".format(k, v) for k, v in test_results.items()))
+        logger.info(
+            f"Valid Metrics:: "
+            + "".join("{}: {:.4f} ".format(k, v) for k, v in valid_results.items())
+        )
+        logger.info(
+            f"Test Metrics:: "
+            + "".join("{}: {:.4f} ".format(k, v) for k, v in test_results.items())
+        )
         gc.collect()
         torch.cuda.empty_cache()
         return valid_results, test_results  # logits_embs is None
@@ -249,7 +295,9 @@ class LinkLMTrainer(Trainer):
         if self.args.mode == "train":
             self.train_once()
 
-        logger.warning(f"\n*************** Start inference and testing ***************\n")
+        logger.warning(
+            f"\n*************** Start inference and testing ***************\n"
+        )
         valid_results, test_results = self.inference_and_evaluate(self.all_set)
         gc.collect()
         torch.cuda.empty_cache()
