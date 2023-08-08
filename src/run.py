@@ -33,11 +33,15 @@ def cleanup():
 
 
 def load_data(args):
-    assert args.dataset in ["ogbn-arxiv", "ogbl-citation2", "ogbn-products", "ogbn-arxiv-tape"]
+    assert args.dataset in [
+        "ogbn-arxiv", "ogbl-citation2", "ogbn-products", "ogbn-arxiv-tape"
+    ]
     tokenize = args.model_type not in GNN_LIST
     data, split_idx, evaluator = load_data_bundle(
-        args.dataset, root=args.data_folder, tokenizer=args.pretrained_repo, tokenize=tokenize
-    )
+        args.dataset,
+        root=args.data_folder,
+        tokenizer=args.pretrained_repo,
+        tokenize=tokenize)
     # process data
     if args.dataset == "ogbn-arxiv":
         transform = T.ToUndirected()
@@ -66,14 +70,17 @@ def load_data(args):
                 preds.append(inner_list)
         pl = torch.zeros(len(preds), 5, dtype=torch.long)
         for i, pred in enumerate(preds):
-            pl[i][: len(pred)] = torch.tensor(pred[:5], dtype=torch.long) + 1
+            pl[i][:len(pred)] = torch.tensor(pred[:5], dtype=torch.long) + 1
         data.x = pl
 
     if args.debug:
         all_idx = torch.arange(0, 3000)
         data = data.subgraph(all_idx)
         if args.dataset in ["ogbl-citation2"]:
-            split_idx["train"] = {"source_node": all_idx[:1000], "target_node": all_idx[1000:2000]}
+            split_idx["train"] = {
+                "source_node": all_idx[:1000],
+                "target_node": all_idx[1000:2000]
+            }
             split_idx["valid"] = {
                 "source_node": all_idx[1000:2000],
                 "target_node": all_idx[2000:3000],

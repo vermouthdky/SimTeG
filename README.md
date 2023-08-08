@@ -1,5 +1,8 @@
 # SimTG: A Frustratingly Simple Approach For Textual Graph Representation Learning
-![feature space](./misc/feature_space.png)
+<!-- ![feature space](./misc/architecture.png) -->
+<p align='center'>
+<img src='./misc/architecture.png'>
+</p>
 This is the official repository of SimTG. Prepreint will be release soon.
 ## Environment
 ```bash
