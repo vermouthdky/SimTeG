@@ -2,8 +2,23 @@
 <!-- ![feature space](./misc/architecture.png) -->
 <p align='center'>
 <img src='./misc/architecture.png'>
-</p>
-This is the official repository of SimTG. Prepreint will be release soon.
+</p> 
+
+![](https://img.shields.io/badge/arXiv-2308.02565-B31B1B?logo=arxiv&logoColor=fff) 
+
+This is the official repository of SimTeG. resoureces: [[Paper]](https://arxiv.org/abs/2308.02565) [[Generated Embeddings]](https://huggingface.co/datasets/vermouthdky/SimTeG)
+
+```bibtex
+@misc{duan2023simteg,
+      title={SimTeG: A Frustratingly Simple Approach Improves Textual Graph Learning}, 
+      author={Keyu Duan and Qian Liu and Tat-Seng Chua and Shuicheng Yan and Wei Tsang Ooi and Qizhe Xie and Junxian He},
+      year={2023},
+      eprint={2308.02565},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```
+
 ## Environment
 ```bash
 conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
