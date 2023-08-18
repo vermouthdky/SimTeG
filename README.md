@@ -115,9 +115,7 @@ bash scripts/ogbn-arxiv-tape/e5-large/main.sh
 bash scripts/ogbn-arxiv/roberta-large/main.sh
 bash scripts/ogbn-arxiv-tape/roberta-large/main.sh
 
-bash scripts/ogbn-arxiv-tape/graphsage/main.sh # contains all training scripts
-bash scripts/ogbn-arxiv-tape/graphsage/main.sh # contains all training scripts
-
+bash scripts/ogbn-arxiv-tape/revgat/main.sh # contains all training scripts
 
 logits1=out/ogbn-arxiv/revgat/ensemble_X_e5-large/cached_embs
 logits2=out/ogbn-arxiv/revgat/ensemble_X_all-roberta-large-v1/cached_embs
@@ -126,7 +124,7 @@ logits4=out/ogbn-arxiv-tape/revgat/ensemble_X_all-roberta-large-v1/cached_embs
 logits5=out/ogbn-arxiv/revgat/ensemble_preds/cached_embs
 
 python compute_ensemble.py \
-    --list_logits "${logits1} ${logits2} ${logits4} ${logits5} ${logits7}" \
+    --list_logits "${logits1} ${logits2} ${logits3} ${logits4} ${logits5}" \
     --weights 2 2 1 1 1 \
     --start_seed 1
 ```
